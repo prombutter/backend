@@ -1,0 +1,5 @@
+[P1] Mock API 전 영역 1차 배포 (API-101 기반, FE 언블로커)
+API-101 명세 기반으로 Mock API 서버 1차 배포. 인증 전 영역 (회원가입, 로그인, Google OAuth, 세션, 계정 설정, 탈퇴) + 파츠 CRUD + 프롬프트·즐겨찾기·갤러리·대시보드·이벤트 전 엔드포인트 하드코딩 JSON 응답으로 제공. FE 즉시 착수 가능하도록 Postman 공유 필수.
+
+[P3-W5] BE — 파츠 CRUD·태그·Soft Delete·Duplicate 실 API 구현
+파츠 관련 전 API 구현:\n- 파츠 CRUD + 제목 중복 검증 + 글자수 제한 (제목 100자/본문 700자)\n- 파츠 목록 API (검색 300ms 디바운스 + 태그 AND 필터)\n- 태그 관리 API (부여/제거/자동완성, 최대 10개)\n- 파츠 Soft Delete + 휴지통 목록 + 복구 API + 30일 자동 영구 삭제 스케줄러\n- 파츠 Duplicate API
