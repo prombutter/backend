@@ -35,3 +35,8 @@ build/
 # --- OS ---
 .DS_Store
 Thumbs.db
+
+# --- Docs/Plans ---
+00_backlog/
+01_planning/
+02_func/
