@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: str | None = None
     GCP_STORAGE_BUCKET: str | None = None
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # CORS
+    CORS_ORIGINS: str = "http://localhost:3000"
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()
