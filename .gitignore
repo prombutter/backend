@@ -11,6 +11,10 @@ AGENTS.md
 .vscode/
 .claude/
 
+# --- AI agents / skills ---
+.agents/
+skills-lock.json
+
 # --- Python ---
 __pycache__/
 *.py[cod]
