@@ -35,3 +35,7 @@ build/
 # --- OS ---
 .DS_Store
 Thumbs.db
+
+# ContextBuilder 민감 파일 (자동 추가)
+CLAUDE.md
+*.env
