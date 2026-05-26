@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
-from fastapi import FastAPI
+from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.routers import auth, parts, prompts, gallery, dashboard, extension
 try:
     from app.routers import health
 except ImportError:
@@ -25,6 +26,16 @@ app.add_middleware(
 
 if health:
     app.include_router(health.router)
+
+api_router = APIRouter(prefix=settings.API_V1_STR)
+api_router.include_router(auth.router)
+api_router.include_router(parts.router)
+api_router.include_router(prompts.router)
+api_router.include_router(gallery.router)
+api_router.include_router(dashboard.router)
+api_router.include_router(extension.router)
+
+app.include_router(api_router)
 
 @app.get("/")
 async def root():
