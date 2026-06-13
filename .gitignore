@@ -1,4 +1,4 @@
-# --- Project assets (kept locally, not committed) ---
+﻿# --- Project assets (kept locally, not committed) ---
 기획서.md
 AGENTS.md
 *.damx
@@ -39,3 +39,74 @@ Thumbs.db
 # ContextBuilder 민감 파일 (자동 추가)
 CLAUDE.md
 *.env
+# === ContextBuilder 표준 .gitignore (SSOT: Security/적용/git_민감파일관리.md v1.1.0) ===
+
+# ContextBuilder 민감 파일
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+AGENTS.local.md
+.claude/
+
+# 환경 변수·시크릿
+.env
+.env.*
+!.env.example
+!.env.template
+
+# 인증·키 (절대 git 추적 금지)
+*.key
+*.pem
+*.p12
+*.pfx
+*.cert
+*.crt
+credentials.json
+service-account*.json
+firebase-service-account*.json
+*-firebase-adminsdk-*.json
+google-services.json
+GoogleService-Info.plist
+
+# ContextBuilder 중앙 Secrets 폴더 (소비 측에 만들지 않음, 만든 경우 제외)
+Secrets/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 빌드 산출물
+node_modules/
+dist/
+build/
+out/
+.next/
+.turbo/
+.cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 로그·임시
+*.log
+_*.log
+.tmp/
+tmp/
+
+# 산출물 (내부 도메인 어휘·정책·보안 감사 외부 노출 차단)
+Docs/
+!Docs/.gitkeep
+
+# === end ContextBuilder 표준 .gitignore ===
+
+# --- DB 마이그레이션 SQL (추적함 — 이 레포는 SQL 전달이 목적) ---
+# 위 *.sql 전역 무시를 db/migrations 하위에 한해 해제
+!db/migrations/
+!db/migrations/*.sql
