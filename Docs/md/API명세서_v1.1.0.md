@@ -1,4 +1,4 @@
-# API 명세서 v1.0.0
+# API 명세서 v1.1.0
 
 본 문서는 promButter 백엔드 시스템의 주요 도메인 API 명세를 정의한다.
 
@@ -90,3 +90,19 @@
 | **설명** | 해당 파츠의 즐겨찾기(별표) 상태를 반전시킨다. |
 | **Server 동작** | 기존 `is_favorite` 값을 반전시킨 뒤 갱신한다. |
 | **DB 처리 방식** | `parts` 테이블의 `is_favorite` 컬럼 UPDATE. |
+
+---
+
+## 2. 기타 도메인 Mock API 명세 (P1)
+
+프론트엔드 개발 언블로킹을 위해 임시로 제공되는 가짜(Mock) 데이터 반환 엔드포인트이다.
+
+| Endpoint | Method | 목적 및 시스템 동작 | Request (Body / Param) | Response |
+|---|---|---|---|---|
+| `/api/v1/auth/login` | POST | 테스트용 더미 액세스 토큰과 유저 정보를 반환한다. | `Body: email, password` | `{token, user}` |
+| `/api/v1/auth/register` | POST | 회원가입 성공 더미 응답을 반환한다. | `Body: email, password, name` | `{token, user}` |
+| `/api/v1/prompts` | GET/POST | 더미 프롬프트 조합 목록 조회 및 생성 응답을 반환한다. | - | `List[Prompt]` / `Prompt` |
+| `/api/v1/gallery/templates` | GET | 갤러리 내 샘플 템플릿 목록 더미 데이터를 반환한다. | - | `List[Template]` |
+| `/api/v1/dashboard/stats` | GET | 워크스페이스 대시보드용 더미 통계 지표(사용량 등)를 반환한다. | - | `{stats...}` |
+
+※ 향후 인증 및 프롬프트 로직 등 동료 개발자의 API 실구현이 완료되면 본 명세서 하단에 섹션을 추가하여 통합한다.
