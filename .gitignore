@@ -1,4 +1,4 @@
-﻿# --- Project assets (kept locally, not committed) ---
+# --- Project assets (kept locally, not committed) ---
 기획서.md
 AGENTS.md
 *.damx
@@ -10,6 +10,11 @@ AGENTS.md
 .idea/
 .vscode/
 .claude/
+*.iml
+
+# --- AI agents / skills ---
+.agents/
+skills-lock.json
 
 # --- Python ---
 __pycache__/
@@ -26,35 +31,9 @@ env/
 .env
 .env.*
 !.env.example
-
-# --- Build / deploy ---
-dist/
-build/
-*.log
-
-# --- OS ---
-.DS_Store
-Thumbs.db
-
-# ContextBuilder 민감 파일 (자동 추가)
-CLAUDE.md
-*.env
-# === ContextBuilder 표준 .gitignore (SSOT: Security/적용/git_민감파일관리.md v1.1.0) ===
-
-# ContextBuilder 민감 파일
-CLAUDE.md
-CLAUDE.local.md
-AGENTS.md
-AGENTS.local.md
-.claude/
-
-# 환경 변수·시크릿
-.env
-.env.*
-!.env.example
 !.env.template
 
-# 인증·키 (절대 git 추적 금지)
+# --- 인증·키 (절대 git 추적 금지) ---
 *.key
 *.pem
 *.p12
@@ -67,44 +46,33 @@ firebase-service-account*.json
 *-firebase-adminsdk-*.json
 google-services.json
 GoogleService-Info.plist
-
-# ContextBuilder 중앙 Secrets 폴더 (소비 측에 만들지 않음, 만든 경우 제외)
 Secrets/
 
-# IDE
-.idea/
-.vscode/
-*.iml
+# --- ContextBuilder 민감 파일 ---
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.local.md
 
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# 빌드 산출물
-node_modules/
+# --- Build / deploy ---
 dist/
 build/
 out/
 .next/
 .turbo/
 .cache/
-__pycache__/
-*.pyc
-.venv/
-venv/
-
-# 로그·임시
 *.log
-_*.log
-.tmp/
-tmp/
 
-# 산출물 (내부 도메인 어휘·정책·보안 감사 외부 노출 차단)
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Docs / Plans (레포 외부 관리 원칙) ---
+00_backlog/
+01_planning/
+02_func/
 Docs/
 !Docs/.gitkeep
-
-# === end ContextBuilder 표준 .gitignore ===
 
 # --- DB 마이그레이션 SQL (추적함 — 이 레포는 SQL 전달이 목적) ---
 # 위 *.sql 전역 무시를 db/migrations 하위에 한해 해제

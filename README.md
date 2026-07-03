@@ -3,7 +3,7 @@
 FastAPI 기반 **DB 세팅·연결·SQL 전달용** 백엔드. PostgreSQL(Supabase) 사용.
 
 > 이 레포는 **DB 스키마 셋업과 SQL 전달**이 목적이며, 서비스로 **배포하지 않는다.**
-> 포함된 FastAPI 앱은 로컬에서 DB 연결을 확인(`/db-ping`)하기 위한 경량 도구다.
+> 포함된 FastAPI 앱은 로컬에서 DB 연결을 확인(`/db-ping`)하고 인증/워크스페이스 API를 개발하기 위한 것이다.
 
 ## DB 스키마 / 마이그레이션
 
@@ -61,7 +61,7 @@ uv run uvicorn app.main:app --reload --port 8000
 
 ```
 app/
-  main.py        FastAPI 앱 진입점·CORS·보안 헤더·라우터 등록
+  main.py        FastAPI 앱 진입점·CORS·라우터 등록
   config.py      환경변수 (pydantic-settings)
   db.py          SQLAlchemy async 엔진·세션
   routers/
