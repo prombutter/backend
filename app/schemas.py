@@ -44,3 +44,23 @@ class WorkspaceResponse(BaseModel):
     id: uuid.UUID
     name: str
     created_at: datetime
+
+
+# ===== PB-72: 프롬프트 요청/응답 =====
+class PromptCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=100)  # 워크스페이스 내 중복 불가(라우터에서 검사)
+
+
+class PromptUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class PromptResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    title: str
+    favorited_at: datetime | None  # NULL=미등록 — FE는 null 여부로 ♥ 표시
+    created_at: datetime
+    updated_at: datetime
