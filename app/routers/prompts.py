@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
@@ -31,6 +31,7 @@ from app.schemas import PromptCreate, PromptResponse, PromptUpdate
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
 PURGE_AFTER_DAYS = 30  # 소프트 삭제 후 영구 삭제까지 유예
+FAVORITE_LIMIT = 5  # 워크스페이스당 즐겨찾기(♥) 상한 (PB-72 확정 정책)
 
 
 async def _title_taken(
@@ -48,6 +49,19 @@ async def _title_taken(
     if exclude_id is not None:
         stmt = stmt.where(Prompt.id != exclude_id)
     return await session.scalar(stmt) is not None
+
+
+async def _active_favorite_count(session: AsyncSession, workspace_id: uuid.UUID) -> int:
+    """워크스페이스의 현재 즐겨찾기 개수 (삭제 안 된 것만)."""
+    return await session.scalar(
+        select(func.count())
+        .select_from(Prompt)
+        .where(
+            Prompt.workspace_id == workspace_id,
+            Prompt.favorited_at.is_not(None),
+            Prompt.deleted_at.is_(None),
+        )
+    )
 
 
 async def _get_active_prompt(
@@ -137,3 +151,41 @@ async def delete_prompt(
     prompt.deleted_at = now
     prompt.purge_at = now + timedelta(days=PURGE_AFTER_DAYS)
     await session.commit()
+
+
+@router.post("/{prompt_id}/favorite", response_model=PromptResponse)
+async def add_favorite(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_current_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> Prompt:
+    """즐겨찾기(♥) 등록. 이미 ♥면 멱등(현재 상태 반환).
+    새로 등록 시 워크스페이스 상한(5개) 초과면 409로 차단(자동삭제 X)."""
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    if prompt.favorited_at is not None:  # 이미 등록됨 → 멱등, 상한 검사 불필요
+        return prompt
+    if await _active_favorite_count(session, workspace.id) >= FAVORITE_LIMIT:
+        raise AppError(
+            status.HTTP_409_CONFLICT,
+            "ERR-FAVORITE-LIMIT",
+            f"즐겨찾기는 최대 {FAVORITE_LIMIT}개까지 가능해요. 다른 프롬프트의 즐겨찾기를 먼저 해제해 주세요.",
+        )
+    prompt.favorited_at = datetime.now(timezone.utc)  # updated_at은 건드리지 않음(수정 순서 보존)
+    await session.commit()
+    await session.refresh(prompt)
+    return prompt
+
+
+@router.delete("/{prompt_id}/favorite", response_model=PromptResponse)
+async def remove_favorite(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_current_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> Prompt:
+    """즐겨찾기(♥) 해제. 이미 해제 상태여도 멱등(현재 상태 반환)."""
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    if prompt.favorited_at is not None:
+        prompt.favorited_at = None
+        await session.commit()
+        await session.refresh(prompt)
+    return prompt
