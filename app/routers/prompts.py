@@ -19,19 +19,36 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import func, select
+from sqlalchemy import column, delete, func, select, table
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.db import get_session
 from app.deps import get_current_workspace
-from app.models import Prompt, Workspace
-from app.schemas import PromptCreate, PromptResponse, PromptUpdate
+from app.models import BlockType, Prompt, PromptBlock, Workspace
+from app.schemas import (
+    BlockInput,
+    BlockResponse,
+    PromptCreate,
+    PromptDetailResponse,
+    PromptResponse,
+    PromptUpdate,
+)
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
 PURGE_AFTER_DAYS = 30  # 소프트 삭제 후 영구 삭제까지 유예
 FAVORITE_LIMIT = 5  # 워크스페이스당 즐겨찾기(♥) 상한 (PB-72 확정 정책)
+
+# parts 테이블은 PB-89 소관이라 ORM 모델을 두지 않는다(향후 Part 모델과 충돌 방지).
+# PART 블록 참조 검증용으로 필요한 컬럼만 Core table로 가볍게 매핑(읽기 전용).
+_parts = table(
+    "parts",
+    column("id", PG_UUID(as_uuid=True)),
+    column("workspace_id", PG_UUID(as_uuid=True)),
+    column("deleted_at"),
+)
 
 
 async def _title_taken(
@@ -79,21 +96,86 @@ async def _get_active_prompt(
     return prompt
 
 
-@router.post("", response_model=PromptResponse, status_code=status.HTTP_201_CREATED)
+async def _validate_part_refs(
+    session: AsyncSession, workspace_id: uuid.UUID, blocks: list[BlockInput]
+) -> None:
+    """PART 블록이 참조하는 파츠가 내 워크스페이스에 살아있는지 확인. 없으면 422.
+
+    파츠 생성 경로(PB-89)가 아직 없어 현 단계에선 PART 블록이 사실상 막힌다(정상).
+    """
+    part_ids = [b.part_id for b in blocks if b.block_type == BlockType.PART]
+    if not part_ids:
+        return
+    valid = set(
+        await session.scalars(
+            select(_parts.c.id).where(
+                _parts.c.id.in_(part_ids),
+                _parts.c.workspace_id == workspace_id,
+                _parts.c.deleted_at.is_(None),
+            )
+        )
+    )
+    missing = [pid for pid in part_ids if pid not in valid]
+    if missing:
+        raise AppError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "ERR-BLOCK-INVALID-PART",
+            f"참조한 파츠를 찾을 수 없어요: {missing[0]}",
+        )
+
+
+def _build_blocks(prompt_id: uuid.UUID, blocks: list[BlockInput]) -> list[PromptBlock]:
+    """입력 블록을 PromptBlock ORM으로. 배열 위치가 곧 sort_order(0부터)."""
+    return [
+        PromptBlock(
+            prompt_id=prompt_id,
+            block_type=b.block_type,
+            inline_body=b.inline_body,
+            part_id=b.part_id,
+            sort_order=i,
+        )
+        for i, b in enumerate(blocks)
+    ]
+
+
+async def _detail(session: AsyncSession, prompt: Prompt) -> PromptDetailResponse:
+    """프롬프트 + 블록(sort_order 순)을 상세 응답으로 조립."""
+    blocks = list(
+        await session.scalars(
+            select(PromptBlock)
+            .where(PromptBlock.prompt_id == prompt.id)
+            .order_by(PromptBlock.sort_order)
+        )
+    )
+    return PromptDetailResponse(
+        id=prompt.id,
+        workspace_id=prompt.workspace_id,
+        title=prompt.title,
+        favorited_at=prompt.favorited_at,
+        created_at=prompt.created_at,
+        updated_at=prompt.updated_at,
+        blocks=[BlockResponse.model_validate(b) for b in blocks],
+    )
+
+
+@router.post("", response_model=PromptDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_prompt(
     body: PromptCreate,
     workspace: Workspace = Depends(get_current_workspace),
     session: AsyncSession = Depends(get_session),
-) -> Prompt:
+) -> PromptDetailResponse:
     if await _title_taken(session, workspace.id, body.title):
         raise AppError(
             status.HTTP_409_CONFLICT, "ERR-PROMPT-DUP-TITLE", "같은 이름의 프롬프트가 이미 있어요."
         )
+    await _validate_part_refs(session, workspace.id, body.blocks)
     prompt = Prompt(workspace_id=workspace.id, title=body.title)
     session.add(prompt)
+    await session.flush()  # prompt.id 확보 (블록 FK)
+    session.add_all(_build_blocks(prompt.id, body.blocks))
     await session.commit()
     await session.refresh(prompt)
-    return prompt
+    return await _detail(session, prompt)
 
 
 @router.get("", response_model=list[PromptResponse])
@@ -109,23 +191,26 @@ async def list_prompts(
     return list(await session.scalars(stmt))
 
 
-@router.get("/{prompt_id}", response_model=PromptResponse)
+@router.get("/{prompt_id}", response_model=PromptDetailResponse)
 async def get_prompt(
     prompt_id: uuid.UUID,
     workspace: Workspace = Depends(get_current_workspace),
     session: AsyncSession = Depends(get_session),
-) -> Prompt:
-    return await _get_active_prompt(session, workspace, prompt_id)
+) -> PromptDetailResponse:
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    return await _detail(session, prompt)
 
 
-@router.patch("/{prompt_id}", response_model=PromptResponse)
+@router.patch("/{prompt_id}", response_model=PromptDetailResponse)
 async def update_prompt(
     prompt_id: uuid.UUID,
     body: PromptUpdate,
     workspace: Workspace = Depends(get_current_workspace),
     session: AsyncSession = Depends(get_session),
-) -> Prompt:
+) -> PromptDetailResponse:
     prompt = await _get_active_prompt(session, workspace, prompt_id)
+    changed = False
+
     if body.title is not None and body.title != prompt.title:
         if await _title_taken(session, workspace.id, body.title, exclude_id=prompt.id):
             raise AppError(
@@ -134,10 +219,19 @@ async def update_prompt(
                 "같은 이름의 프롬프트가 이미 있어요.",
             )
         prompt.title = body.title
+        changed = True
+
+    if body.blocks is not None:  # 통째로 교체(생략이면 유지). []면 전부 삭제
+        await _validate_part_refs(session, workspace.id, body.blocks)
+        await session.execute(delete(PromptBlock).where(PromptBlock.prompt_id == prompt.id))
+        session.add_all(_build_blocks(prompt.id, body.blocks))
+        changed = True
+
+    if changed:
         prompt.updated_at = datetime.now(timezone.utc)  # DB에 자동 갱신 트리거 없음 → 명시적
     await session.commit()
     await session.refresh(prompt)
-    return prompt
+    return await _detail(session, prompt)
 
 
 @router.delete("/{prompt_id}", status_code=status.HTTP_204_NO_CONTENT)

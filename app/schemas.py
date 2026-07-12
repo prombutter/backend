@@ -10,9 +10,9 @@ models.py(DB 테이블)와 구분: 이건 API 요청/응답의 "모양".
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
-from app.models import UserRole
+from app.models import BlockType, UserRole
 
 
 # ===== 요청 (Request) =====
@@ -47,15 +47,59 @@ class WorkspaceResponse(BaseModel):
 
 
 # ===== PB-72: 프롬프트 요청/응답 =====
+MAX_BLOCKS = 10  # 프롬프트당 블록 상한 (DoD)
+
+
+class BlockInput(BaseModel):
+    """프롬프트에 담기는 블록 1개. 순서는 배열 위치로 정해진다(sort_order 별도 입력 없음).
+
+    - INLINE: inline_body(≤700자) 필수, part_id 금지
+    - PART:   part_id 필수(파츠 참조), inline_body 금지 — 존재/소유는 라우터에서 검증
+    """
+
+    block_type: BlockType
+    inline_body: str | None = Field(default=None, max_length=700)
+    part_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _check_shape(self) -> "BlockInput":
+        if self.block_type == BlockType.INLINE:
+            if not (self.inline_body and self.inline_body.strip()):
+                raise ValueError("INLINE 블록은 inline_body가 필요해요.")
+            if self.part_id is not None:
+                raise ValueError("INLINE 블록에는 part_id를 넣을 수 없어요.")
+        else:  # PART
+            if self.part_id is None:
+                raise ValueError("PART 블록은 part_id가 필요해요.")
+            if self.inline_body is not None:
+                raise ValueError("PART 블록에는 inline_body를 넣을 수 없어요.")
+        return self
+
+
 class PromptCreate(BaseModel):
     title: str = Field(min_length=1, max_length=100)  # 워크스페이스 내 중복 불가(라우터에서 검사)
+    blocks: list[BlockInput] = Field(default_factory=list, max_length=MAX_BLOCKS)
 
 
 class PromptUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=100)
+    # blocks 생략(None) → 기존 유지 / [] → 전부 삭제 / [..] → 통째로 교체
+    blocks: list[BlockInput] | None = Field(default=None, max_length=MAX_BLOCKS)
+
+
+class BlockResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    block_type: BlockType
+    inline_body: str | None
+    part_id: uuid.UUID | None
+    sort_order: int
 
 
 class PromptResponse(BaseModel):
+    """목록용(가벼움) — 블록 미포함."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -64,3 +108,9 @@ class PromptResponse(BaseModel):
     favorited_at: datetime | None  # NULL=미등록 — FE는 null 여부로 ♥ 표시
     created_at: datetime
     updated_at: datetime
+
+
+class PromptDetailResponse(PromptResponse):
+    """단건/생성/수정용 — 블록 포함(sort_order 오름차순)."""
+
+    blocks: list[BlockResponse]
