@@ -57,6 +57,22 @@ async def make_email():
                 await conn.execute(
                     text("delete from user_sessions where user_id=:u"), {"u": uid}
                 )
+                # 프롬프트 계열 먼저 정리 (workspaces FK 때문에 순서 중요): blocks → prompts
+                await conn.execute(
+                    text(
+                        "delete from prompt_blocks where prompt_id in "
+                        "(select p.id from prompts p join workspaces w on w.id=p.workspace_id "
+                        "where w.owner_id=:u)"
+                    ),
+                    {"u": uid},
+                )
+                await conn.execute(
+                    text(
+                        "delete from prompts where workspace_id in "
+                        "(select id from workspaces where owner_id=:u)"
+                    ),
+                    {"u": uid},
+                )
                 await conn.execute(text("delete from workspaces where owner_id=:u"), {"u": uid})
                 await conn.execute(text("delete from users where id=:u"), {"u": uid})
             # login_attempts는 email_hash만 저장하므로 해시로 매칭해 삭제
