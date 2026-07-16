@@ -145,7 +145,7 @@ async def _validate_part_refs(
     missing = [pid for pid in part_ids if pid not in valid]
     if missing:
         raise AppError(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "ERR-BLOCK-INVALID-PART",
             f"참조한 파츠를 찾을 수 없어요: {missing[0]}",
         )
@@ -158,7 +158,7 @@ def _validate_blocks(blocks: list[BlockInput]) -> None:
     """
     if len(blocks) > MAX_BLOCKS:
         raise AppError(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "ERR-BLOCK-001",
             f"블록은 최대 {MAX_BLOCKS}개까지 추가할 수 있어요.",
         )
@@ -169,7 +169,7 @@ def _validate_blocks(blocks: list[BlockInput]) -> None:
             and len(b.inline_body) > INLINE_MAX_CHARS
         ):
             raise AppError(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "ERR-BODY-002",
                 f"텍스트는 {INLINE_MAX_CHARS}자까지 쓸 수 있어요.",
             )
@@ -410,7 +410,7 @@ async def toggle_favorite(
     else:
         if await _active_favorite_count(session, workspace.id) >= FAVORITE_LIMIT:
             raise AppError(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "ERR-FAV-002",
                 f"프롬프트 즐겨찾기는 {FAVORITE_LIMIT}개까지 등록할 수 있어요. 일부를 해제한 뒤 다시 시도해 주세요.",
             )
