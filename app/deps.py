@@ -64,3 +64,18 @@ async def get_current_workspace(
             status.HTTP_404_NOT_FOUND, "ERR-WORKSPACE-NOT-FOUND", "워크스페이스를 찾을 수 없어요."
         )
     return ws
+
+
+async def get_path_workspace(
+    workspace_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Workspace:
+    """URL 경로의 workspace_id가 현재 유저 소유인지 검증하고 반환.
+    남의 워크스페이스/없는 id는 404로 통일(존재 노출 방지)."""
+    ws = await session.get(Workspace, workspace_id)
+    if ws is None or ws.owner_id != user.id:
+        raise AppError(
+            status.HTTP_404_NOT_FOUND, "ERR-WORKSPACE-NOT-FOUND", "워크스페이스를 찾을 수 없어요."
+        )
+    return ws

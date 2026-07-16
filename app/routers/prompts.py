@@ -1,16 +1,21 @@
 """
-프롬프트 라우터 — PB-72 (Phase 2: title-level CRUD)
+프롬프트 라우터 — PB-72
 
-POST   /prompts        생성
-GET    /prompts        목록(soft-delete 제외)
-GET    /prompts/{id}   단건 조회
-PATCH  /prompts/{id}   제목 수정
-DELETE /prompts/{id}   소프트 삭제(deleted_at, purge_at=+30일)
+Base: /workspaces/{workspace_id}/prompts  (경로 workspace_id는 소유 검증)
+  POST   ""                 생성
+  GET    ""                 목록(soft-delete 제외)
+  GET    "/favorites"       EXT-WIDGET용 즐겨찾기 목록  (※ /{prompt_id}보다 먼저 선언)
+  GET    "/{id}"            단건(블록 포함)
+  PATCH  "/{id}"            수정(제목·블록 통째 교체)
+  DELETE "/{id}"            소프트 삭제(deleted_at, purge_at=+30일)
+  POST   "/{id}/duplicate"  복제(제목 '(복사)', 블록 복사, ★ 미등록)
+  POST   "/{id}/favorite"   즐겨찾기 토글(★ on/off, 상한 5)
+  GET    "/{id}/variables"  블록에서 뽑은 변수명(EXT 폼용)
+  POST   "/{id}/render"     블록 이어붙여 {{변수}} 치환
 
-스코프: 모든 엔드포인트는 현재 유저의 워크스페이스로 한정.
-정책(PB-72): title은 워크스페이스 내 중복 불가(라우터에서 검사, 409).
-             DB에 (workspace_id, title) UNIQUE 제약이 없어 앱 계층에서 검사한다.
-             블록·변수·즐겨찾기는 다음 Phase.
+정책(ERR-001 v1.5 정본): 제목 중복=409 ERR-TITLE-001 / 블록10초과=422 ERR-BLOCK-001 /
+  인라인700초과=422 ERR-BODY-002 / 즐겨찾기 상한5 초과=422 ERR-FAV-002.
+  제목·즐겨찾기 상한은 DB 제약이 없어 앱 계층에서 검사(동시요청은 후속 과제).
 
 위치: app/routers/prompts.py
 """
@@ -26,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.db import get_session
-from app.deps import get_current_workspace
+from app.deps import get_path_workspace
 from app.models import BlockType, Prompt, PromptBlock, Workspace
 from app.schemas import (
     BlockInput,
@@ -43,12 +48,13 @@ from app.schemas import (
 # {{ 이름 }} — 양옆 공백 허용, 이름엔 중괄호/개행 불가. group(1)=변수명(공백 trim은 아래서)
 _VAR_RE = re.compile(r"\{\{\s*([^{}\n]+?)\s*\}\}")
 
-router = APIRouter(prefix="/prompts", tags=["prompts"])
+router = APIRouter(prefix="/workspaces/{workspace_id}/prompts", tags=["prompts"])
 
 PURGE_AFTER_DAYS = 30  # 소프트 삭제 후 영구 삭제까지 유예
 FAVORITE_LIMIT = 5  # 워크스페이스당 즐겨찾기(★) 상한 (PB-72 확정 정책, 초과=ERR-FAV-002/422)
 MAX_BLOCKS = 10  # 프롬프트당 블록 상한 (STRUCT-001 §5, 초과=ERR-BLOCK-001/422)
 INLINE_MAX_CHARS = 700  # 인라인 텍스트 상한 (STRUCT-001 §5.2, 초과=ERR-BODY-002/422)
+TITLE_MAX_CHARS = 100  # 제목 상한(DB varchar(100))
 
 # parts 테이블은 PB-89 소관이라 ORM 모델을 두지 않는다(향후 Part 모델과 충돌 방지).
 # PART 블록 참조 검증용으로 필요한 컬럼만 Core table로 가볍게 매핑(읽기 전용).
@@ -75,6 +81,18 @@ async def _title_taken(
     if exclude_id is not None:
         stmt = stmt.where(Prompt.id != exclude_id)
     return await session.scalar(stmt) is not None
+
+
+async def _available_copy_title(
+    session: AsyncSession, workspace_id: uuid.UUID, base: str
+) -> str:
+    """'{base} (복사)' 형태로 중복 없는 제목 생성. 제목 100자 상한 내로 자름."""
+    candidate = f"{base} (복사)"[:TITLE_MAX_CHARS]
+    n = 2
+    while await _title_taken(session, workspace_id, candidate):
+        candidate = f"{base} (복사 {n})"[:TITLE_MAX_CHARS]
+        n += 1
+    return candidate
 
 
 async def _active_favorite_count(session: AsyncSession, workspace_id: uuid.UUID) -> int:
@@ -237,7 +255,7 @@ def _render_text(text: str, values: dict[str, str]) -> tuple[str, list[str]]:
 @router.post("", response_model=PromptDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_prompt(
     body: PromptCreate,
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> PromptDetailResponse:
     if await _title_taken(session, workspace.id, body.title):
@@ -259,7 +277,7 @@ async def create_prompt(
 
 @router.get("", response_model=list[PromptResponse])
 async def list_prompts(
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> list[Prompt]:
     stmt = (
@@ -270,10 +288,29 @@ async def list_prompts(
     return list(await session.scalars(stmt))
 
 
+# ※ /{prompt_id}보다 먼저 선언해야 "favorites"가 UUID 경로로 잡히지 않는다.
+@router.get("/favorites", response_model=list[PromptResponse])
+async def list_favorites(
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> list[Prompt]:
+    """EXT-WIDGET용 즐겨찾기 목록(등록 최신순, soft-delete 제외)."""
+    stmt = (
+        select(Prompt)
+        .where(
+            Prompt.workspace_id == workspace.id,
+            Prompt.favorited_at.is_not(None),
+            Prompt.deleted_at.is_(None),
+        )
+        .order_by(Prompt.favorited_at.desc())
+    )
+    return list(await session.scalars(stmt))
+
+
 @router.get("/{prompt_id}", response_model=PromptDetailResponse)
 async def get_prompt(
     prompt_id: uuid.UUID,
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> PromptDetailResponse:
     prompt = await _get_active_prompt(session, workspace, prompt_id)
@@ -284,7 +321,7 @@ async def get_prompt(
 async def update_prompt(
     prompt_id: uuid.UUID,
     body: PromptUpdate,
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> PromptDetailResponse:
     prompt = await _get_active_prompt(session, workspace, prompt_id)
@@ -317,7 +354,7 @@ async def update_prompt(
 @router.delete("/{prompt_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_prompt(
     prompt_id: uuid.UUID,
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     prompt = await _get_active_prompt(session, workspace, prompt_id)  # 이미 삭제됨 → 404
@@ -327,49 +364,66 @@ async def delete_prompt(
     await session.commit()
 
 
-@router.post("/{prompt_id}/favorite", response_model=PromptResponse)
-async def add_favorite(
+@router.post(
+    "/{prompt_id}/duplicate",
+    response_model=PromptDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def duplicate_prompt(
     prompt_id: uuid.UUID,
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
-) -> Prompt:
-    """즐겨찾기(★) 등록. 이미 ★면 멱등(현재 상태 반환).
-    새로 등록 시 워크스페이스 상한(5개) 초과면 422로 차단(자동삭제 X)."""
-    prompt = await _get_active_prompt(session, workspace, prompt_id)
-    if prompt.favorited_at is not None:  # 이미 등록됨 → 멱등, 상한 검사 불필요
-        return prompt
-    if await _active_favorite_count(session, workspace.id) >= FAVORITE_LIMIT:
-        # 쿼터/상한 초과 = 422로 통일 (BE 확정, ERR-001 정본코드·문구 ERR-FAV-002)
-        raise AppError(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "ERR-FAV-002",
-            f"프롬프트 즐겨찾기는 {FAVORITE_LIMIT}개까지 등록할 수 있어요. 일부를 해제한 뒤 다시 시도해 주세요.",
+) -> PromptDetailResponse:
+    """프롬프트 복제 — 제목 '{원본} (복사)'(중복 시 번호), 블록 복사, ★는 미등록."""
+    src = await _get_active_prompt(session, workspace, prompt_id)
+    src_blocks = await _load_blocks(session, src.id)
+    new_title = await _available_copy_title(session, workspace.id, src.title)
+    dup = Prompt(workspace_id=workspace.id, title=new_title)
+    session.add(dup)
+    await session.flush()  # dup.id 확보
+    session.add_all(
+        PromptBlock(
+            prompt_id=dup.id,
+            block_type=b.block_type,
+            inline_body=b.inline_body,
+            part_id=b.part_id,
+            sort_order=b.sort_order,
         )
-    prompt.favorited_at = datetime.now(timezone.utc)  # updated_at은 건드리지 않음(수정 순서 보존)
+        for b in src_blocks
+    )
     await session.commit()
-    await session.refresh(prompt)
-    return prompt
+    await session.refresh(dup)
+    return await _detail(session, dup)
 
 
-@router.delete("/{prompt_id}/favorite", response_model=PromptResponse)
-async def remove_favorite(
+@router.post("/{prompt_id}/favorite", response_model=PromptResponse)
+async def toggle_favorite(
     prompt_id: uuid.UUID,
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> Prompt:
-    """즐겨찾기(★) 해제. 이미 해제 상태여도 멱등(현재 상태 반환)."""
+    """즐겨찾기(★) 토글 — 켜져 있으면 해제, 아니면 등록. 응답에 최종 상태(favorited_at) 반환.
+    등록 시 워크스페이스 상한(5개) 초과면 422 ERR-FAV-002로 차단(기존 등록 유지)."""
     prompt = await _get_active_prompt(session, workspace, prompt_id)
     if prompt.favorited_at is not None:
-        prompt.favorited_at = None
-        await session.commit()
-        await session.refresh(prompt)
+        prompt.favorited_at = None  # 해제
+    else:
+        if await _active_favorite_count(session, workspace.id) >= FAVORITE_LIMIT:
+            raise AppError(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "ERR-FAV-002",
+                f"프롬프트 즐겨찾기는 {FAVORITE_LIMIT}개까지 등록할 수 있어요. 일부를 해제한 뒤 다시 시도해 주세요.",
+            )
+        prompt.favorited_at = datetime.now(timezone.utc)  # 등록 (updated_at은 미변경)
+    await session.commit()
+    await session.refresh(prompt)
     return prompt
 
 
 @router.get("/{prompt_id}/variables", response_model=VariablesResponse)
 async def get_prompt_variables(
     prompt_id: uuid.UUID,
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> VariablesResponse:
     """프롬프트 블록에서 뽑은 변수명 목록(첫 등장 순). 익스텐션 변수 입력 폼용."""
@@ -382,7 +436,7 @@ async def get_prompt_variables(
 async def render_prompt(
     prompt_id: uuid.UUID,
     body: RenderRequest,
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> RenderResponse:
     """블록을 순서대로 이어붙이고 {{변수}}를 주어진 값으로 치환.
