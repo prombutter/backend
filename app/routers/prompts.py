@@ -46,7 +46,9 @@ _VAR_RE = re.compile(r"\{\{\s*([^{}\n]+?)\s*\}\}")
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
 PURGE_AFTER_DAYS = 30  # 소프트 삭제 후 영구 삭제까지 유예
-FAVORITE_LIMIT = 5  # 워크스페이스당 즐겨찾기(♥) 상한 (PB-72 확정 정책)
+FAVORITE_LIMIT = 5  # 워크스페이스당 즐겨찾기(★) 상한 (PB-72 확정 정책, 초과=ERR-FAV-002/422)
+MAX_BLOCKS = 10  # 프롬프트당 블록 상한 (STRUCT-001 §5, 초과=ERR-BLOCK-001/422)
+INLINE_MAX_CHARS = 700  # 인라인 텍스트 상한 (STRUCT-001 §5.2, 초과=ERR-BODY-002/422)
 
 # parts 테이블은 PB-89 소관이라 ORM 모델을 두지 않는다(향후 Part 모델과 충돌 방지).
 # PART 블록 참조 검증용으로 필요한 컬럼만 Core table로 가볍게 매핑(읽기 전용).
@@ -129,6 +131,30 @@ async def _validate_part_refs(
             "ERR-BLOCK-INVALID-PART",
             f"참조한 파츠를 찾을 수 없어요: {missing[0]}",
         )
+
+
+def _validate_blocks(blocks: list[BlockInput]) -> None:
+    """블록 개수·인라인 길이 상한 검사 — 정본 전용 에러코드 사용.
+
+    (shape 검증은 스키마 BlockInput._check_shape가, 개수/길이는 여기서.)
+    """
+    if len(blocks) > MAX_BLOCKS:
+        raise AppError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "ERR-BLOCK-001",
+            f"블록은 최대 {MAX_BLOCKS}개까지 추가할 수 있어요.",
+        )
+    for b in blocks:
+        if (
+            b.block_type == BlockType.INLINE
+            and b.inline_body
+            and len(b.inline_body) > INLINE_MAX_CHARS
+        ):
+            raise AppError(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "ERR-BODY-002",
+                f"텍스트는 {INLINE_MAX_CHARS}자까지 쓸 수 있어요.",
+            )
 
 
 def _build_blocks(prompt_id: uuid.UUID, blocks: list[BlockInput]) -> list[PromptBlock]:
@@ -216,8 +242,11 @@ async def create_prompt(
 ) -> PromptDetailResponse:
     if await _title_taken(session, workspace.id, body.title):
         raise AppError(
-            status.HTTP_409_CONFLICT, "ERR-PROMPT-DUP-TITLE", "같은 이름의 프롬프트가 이미 있어요."
+            status.HTTP_409_CONFLICT,
+            "ERR-TITLE-001",
+            "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
         )
+    _validate_blocks(body.blocks)
     await _validate_part_refs(session, workspace.id, body.blocks)
     prompt = Prompt(workspace_id=workspace.id, title=body.title)
     session.add(prompt)
@@ -265,13 +294,14 @@ async def update_prompt(
         if await _title_taken(session, workspace.id, body.title, exclude_id=prompt.id):
             raise AppError(
                 status.HTTP_409_CONFLICT,
-                "ERR-PROMPT-DUP-TITLE",
-                "같은 이름의 프롬프트가 이미 있어요.",
+                "ERR-TITLE-001",
+                "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
             )
         prompt.title = body.title
         changed = True
 
     if body.blocks is not None:  # 통째로 교체(생략이면 유지). []면 전부 삭제
+        _validate_blocks(body.blocks)
         await _validate_part_refs(session, workspace.id, body.blocks)
         await session.execute(delete(PromptBlock).where(PromptBlock.prompt_id == prompt.id))
         session.add_all(_build_blocks(prompt.id, body.blocks))
@@ -303,16 +333,17 @@ async def add_favorite(
     workspace: Workspace = Depends(get_current_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> Prompt:
-    """즐겨찾기(♥) 등록. 이미 ♥면 멱등(현재 상태 반환).
-    새로 등록 시 워크스페이스 상한(5개) 초과면 409로 차단(자동삭제 X)."""
+    """즐겨찾기(★) 등록. 이미 ★면 멱등(현재 상태 반환).
+    새로 등록 시 워크스페이스 상한(5개) 초과면 422로 차단(자동삭제 X)."""
     prompt = await _get_active_prompt(session, workspace, prompt_id)
     if prompt.favorited_at is not None:  # 이미 등록됨 → 멱등, 상한 검사 불필요
         return prompt
     if await _active_favorite_count(session, workspace.id) >= FAVORITE_LIMIT:
+        # 쿼터/상한 초과 = 422로 통일 (BE 확정, ERR-001 정본코드·문구 ERR-FAV-002)
         raise AppError(
-            status.HTTP_409_CONFLICT,
-            "ERR-FAVORITE-LIMIT",
-            f"즐겨찾기는 최대 {FAVORITE_LIMIT}개까지 가능해요. 다른 프롬프트의 즐겨찾기를 먼저 해제해 주세요.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "ERR-FAV-002",
+            f"프롬프트 즐겨찾기는 {FAVORITE_LIMIT}개까지 등록할 수 있어요. 일부를 해제한 뒤 다시 시도해 주세요.",
         )
     prompt.favorited_at = datetime.now(timezone.utc)  # updated_at은 건드리지 않음(수정 순서 보존)
     await session.commit()
@@ -326,7 +357,7 @@ async def remove_favorite(
     workspace: Workspace = Depends(get_current_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> Prompt:
-    """즐겨찾기(♥) 해제. 이미 해제 상태여도 멱등(현재 상태 반환)."""
+    """즐겨찾기(★) 해제. 이미 해제 상태여도 멱등(현재 상태 반환)."""
     prompt = await _get_active_prompt(session, workspace, prompt_id)
     if prompt.favorited_at is not None:
         prompt.favorited_at = None

@@ -47,18 +47,19 @@ class WorkspaceResponse(BaseModel):
 
 
 # ===== PB-72: 프롬프트 요청/응답 =====
-MAX_BLOCKS = 10  # 프롬프트당 블록 상한 (DoD)
+# 블록 개수(10)·인라인 길이(700) 상한은 라우터에서 검사한다 — 정본 전용 에러코드
+# (ERR-BLOCK-001 / ERR-BODY-002)를 내보내기 위해 pydantic max_length 대신 명시 검증.
 
 
 class BlockInput(BaseModel):
     """프롬프트에 담기는 블록 1개. 순서는 배열 위치로 정해진다(sort_order 별도 입력 없음).
 
-    - INLINE: inline_body(≤700자) 필수, part_id 금지
+    - INLINE: inline_body 필수(길이 검사는 라우터), part_id 금지
     - PART:   part_id 필수(파츠 참조), inline_body 금지 — 존재/소유는 라우터에서 검증
     """
 
     block_type: BlockType
-    inline_body: str | None = Field(default=None, max_length=700)
+    inline_body: str | None = None
     part_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
@@ -78,13 +79,13 @@ class BlockInput(BaseModel):
 
 class PromptCreate(BaseModel):
     title: str = Field(min_length=1, max_length=100)  # 워크스페이스 내 중복 불가(라우터에서 검사)
-    blocks: list[BlockInput] = Field(default_factory=list, max_length=MAX_BLOCKS)
+    blocks: list[BlockInput] = Field(default_factory=list)
 
 
 class PromptUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=100)
     # blocks 생략(None) → 기존 유지 / [] → 전부 삭제 / [..] → 통째로 교체
-    blocks: list[BlockInput] | None = Field(default=None, max_length=MAX_BLOCKS)
+    blocks: list[BlockInput] | None = None
 
 
 class BlockResponse(BaseModel):
