@@ -7,12 +7,16 @@ models.py(DB 테이블)와 구분: 이건 API 요청/응답의 "모양".
 위치: app/schemas.py
 """
 
+import re
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.models import BlockType, UserRole
+
+# 비밀번호 정책 (인증 명세 1.5): 8자 이상 + 영문·숫자·특수문자 각 1개 이상
+_PW_SPECIAL = r"""!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?~`"""
 
 
 # ===== 요청 (Request) =====
@@ -20,6 +24,17 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=72)  # bcrypt 72바이트 상한
     name: str | None = Field(default=None, max_length=100)  # 없으면 email local-part로 채움
+
+    @field_validator("password")
+    @classmethod
+    def _password_complexity(cls, v: str) -> str:
+        if not re.search(r"[A-Za-z]", v):
+            raise ValueError("비밀번호에 영문을 1자 이상 포함해야 합니다")
+        if not re.search(r"[0-9]", v):
+            raise ValueError("비밀번호에 숫자를 1자 이상 포함해야 합니다")
+        if not re.search(f"[{re.escape(_PW_SPECIAL)}]", v):
+            raise ValueError("비밀번호에 특수문자를 1자 이상 포함해야 합니다")
+        return v
 
 
 class LoginRequest(BaseModel):

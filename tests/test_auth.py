@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.cookies import ACCESS_COOKIE, REFRESH_COOKIE
 from app.db import engine
 
-PW = "password123"
+PW = "password123!"  # 8자+ 영문·숫자·특수문자 (인증 명세 1.5)
 
 
 # ===== signup =====
@@ -31,10 +31,17 @@ async def test_signup_creates_user_and_workspace(client, make_email):
     # 쿠키 발급 확인
     assert client.cookies.get(ACCESS_COOKIE)
     assert client.cookies.get(REFRESH_COOKIE)
-    # 워크스페이스 자동 생성
+    # 워크스페이스 자동 생성 (이름 = "{이름}의 워크스페이스")
     ws = await client.get("/workspaces")
     assert ws.status_code == 200
-    assert ws.json()["name"] == "내 워크스페이스"
+    assert ws.json()["name"] == f"{email.split('@')[0]}의 워크스페이스"
+
+
+async def test_signup_weak_password_422(client, make_email):
+    email = make_email()
+    # 특수문자 없음 → 규칙 위반 → 422 (pydantic 검증)
+    r = await client.post("/auth/signup", json={"email": email, "password": "password123"})
+    assert r.status_code == 422
 
 
 async def test_signup_duplicate_email_409(client, make_email):
@@ -137,4 +144,4 @@ async def test_workspaces_returns_my_workspace(client, make_email):
     await client.post("/auth/signup", json={"email": email, "password": PW})
     r = await client.get("/workspaces")
     assert r.status_code == 200
-    assert r.json()["name"] == "내 워크스페이스"
+    assert r.json()["name"] == f"{email.split('@')[0]}의 워크스페이스"

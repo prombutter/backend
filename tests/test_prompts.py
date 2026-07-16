@@ -11,7 +11,7 @@ Base: /workspaces/{workspace_id}/prompts (경로 ws 소유 검증)
 
 import uuid
 
-PW = "password123"
+PW = "password123!"  # 8자+ 영문·숫자·특수문자 (인증 명세 1.5)
 
 
 def _inline(body: str) -> dict:

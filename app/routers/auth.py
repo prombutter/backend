@@ -87,9 +87,10 @@ async def signup(
     await session.flush()  # user.id 확보 (commit 전)
 
     # 3. 워크스페이스 자동 생성 (1:1 — 이미 있으면 새로 안 만듦)
+    #    이름은 "{유저 이름}의 워크스페이스" (인증 명세 1.4)
     ws = await session.scalar(select(Workspace).where(Workspace.owner_id == user.id))
     if ws is None:
-        session.add(Workspace(owner_id=user.id))  # name은 DB 기본값 '내 워크스페이스'
+        session.add(Workspace(owner_id=user.id, name=f"{name}의 워크스페이스"))
 
     # 4. 토큰 발급 + 세션 저장 + 쿠키
     await _issue_session(session, user, response)
