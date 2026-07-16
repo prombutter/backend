@@ -15,6 +15,7 @@ DELETE /prompts/{id}   소프트 삭제(deleted_at, purge_at=+30일)
 위치: app/routers/prompts.py
 """
 
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -34,7 +35,13 @@ from app.schemas import (
     PromptDetailResponse,
     PromptResponse,
     PromptUpdate,
+    RenderRequest,
+    RenderResponse,
+    VariablesResponse,
 )
+
+# {{ 이름 }} — 양옆 공백 허용, 이름엔 중괄호/개행 불가. group(1)=변수명(공백 trim은 아래서)
+_VAR_RE = re.compile(r"\{\{\s*([^{}\n]+?)\s*\}\}")
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
@@ -138,15 +145,20 @@ def _build_blocks(prompt_id: uuid.UUID, blocks: list[BlockInput]) -> list[Prompt
     ]
 
 
-async def _detail(session: AsyncSession, prompt: Prompt) -> PromptDetailResponse:
-    """프롬프트 + 블록(sort_order 순)을 상세 응답으로 조립."""
-    blocks = list(
+async def _load_blocks(session: AsyncSession, prompt_id: uuid.UUID) -> list[PromptBlock]:
+    """프롬프트의 블록을 sort_order 오름차순으로 로드."""
+    return list(
         await session.scalars(
             select(PromptBlock)
-            .where(PromptBlock.prompt_id == prompt.id)
+            .where(PromptBlock.prompt_id == prompt_id)
             .order_by(PromptBlock.sort_order)
         )
     )
+
+
+async def _detail(session: AsyncSession, prompt: Prompt) -> PromptDetailResponse:
+    """프롬프트 + 블록(sort_order 순)을 상세 응답으로 조립."""
+    blocks = await _load_blocks(session, prompt.id)
     return PromptDetailResponse(
         id=prompt.id,
         workspace_id=prompt.workspace_id,
@@ -156,6 +168,44 @@ async def _detail(session: AsyncSession, prompt: Prompt) -> PromptDetailResponse
         updated_at=prompt.updated_at,
         blocks=[BlockResponse.model_validate(b) for b in blocks],
     )
+
+
+def _assemble_text(blocks: list[PromptBlock]) -> str:
+    """블록을 순서대로 이어붙인 원본 텍스트(줄바꿈 구분).
+
+    INLINE = inline_body. PART = 파츠 본문 병합이 필요하나 파츠 생성 경로(PB-89)가
+    없어 현재 저장 가능한 프롬프트엔 PART 블록이 없다. 방어적으로 빈 조각 처리.
+    """
+    pieces: list[str] = []
+    for b in blocks:
+        if b.block_type == BlockType.INLINE:
+            pieces.append(b.inline_body or "")
+        else:  # PART — TODO(PB-89): 참조 파츠 본문 삽입 + 변수 병합/충돌(has_conflict)
+            pieces.append("")
+    return "\n".join(pieces)
+
+
+def _extract_var_names(text: str) -> list[str]:
+    """텍스트에서 {{변수}} 이름을 첫 등장 순·중복 제거로 추출."""
+    names = (m.strip() for m in _VAR_RE.findall(text))
+    return list(dict.fromkeys(n for n in names if n))
+
+
+def _render_text(text: str, values: dict[str, str]) -> tuple[str, list[str]]:
+    """{{name}}을 values로 치환. 값 없는 변수는 자리표시자로 남기고 missing에 모은다."""
+    missing: list[str] = []
+    seen: set[str] = set()
+
+    def repl(m: re.Match) -> str:
+        name = m.group(1).strip()
+        if name in values:
+            return str(values[name])
+        if name not in seen:
+            seen.add(name)
+            missing.append(name)
+        return m.group(0)  # 값 없음 → {{...}} 그대로
+
+    return _VAR_RE.sub(repl, text), missing
 
 
 @router.post("", response_model=PromptDetailResponse, status_code=status.HTTP_201_CREATED)
@@ -283,3 +333,30 @@ async def remove_favorite(
         await session.commit()
         await session.refresh(prompt)
     return prompt
+
+
+@router.get("/{prompt_id}/variables", response_model=VariablesResponse)
+async def get_prompt_variables(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_current_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> VariablesResponse:
+    """프롬프트 블록에서 뽑은 변수명 목록(첫 등장 순). 익스텐션 변수 입력 폼용."""
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    blocks = await _load_blocks(session, prompt.id)
+    return VariablesResponse(variables=_extract_var_names(_assemble_text(blocks)))
+
+
+@router.post("/{prompt_id}/render", response_model=RenderResponse)
+async def render_prompt(
+    prompt_id: uuid.UUID,
+    body: RenderRequest,
+    workspace: Workspace = Depends(get_current_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> RenderResponse:
+    """블록을 순서대로 이어붙이고 {{변수}}를 주어진 값으로 치환.
+    값이 없는 변수는 자리표시자로 남고 missing에 담긴다(렌더는 실패하지 않음)."""
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    blocks = await _load_blocks(session, prompt.id)
+    rendered, missing = _render_text(_assemble_text(blocks), body.variables)
+    return RenderResponse(rendered=rendered, missing=missing)

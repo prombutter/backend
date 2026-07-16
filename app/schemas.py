@@ -114,3 +114,16 @@ class PromptDetailResponse(PromptResponse):
     """단건/생성/수정용 — 블록 포함(sort_order 오름차순)."""
 
     blocks: list[BlockResponse]
+
+
+class RenderRequest(BaseModel):
+    variables: dict[str, str] = Field(default_factory=dict)  # {변수명: 값}. 없는 값은 미치환
+
+
+class RenderResponse(BaseModel):
+    rendered: str
+    missing: list[str]  # 값이 안 들어와 {{...}} 자리표시자로 남은 변수(첫 등장 순)
+
+
+class VariablesResponse(BaseModel):
+    variables: list[str]  # 프롬프트 블록에서 뽑은 변수명(첫 등장 순, 중복 제거)
