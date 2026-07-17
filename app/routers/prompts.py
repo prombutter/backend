@@ -56,7 +56,7 @@ MAX_BLOCKS = 10  # 프롬프트당 블록 상한 (STRUCT-001 §5, 초과=ERR-BLO
 INLINE_MAX_CHARS = 700  # 인라인 텍스트 상한 (STRUCT-001 §5.2, 초과=ERR-BODY-002/422)
 TITLE_MAX_CHARS = 100  # 제목 상한(DB varchar(100))
 
-# parts 테이블은 PB-89 소관이라 ORM 모델을 두지 않는다(향후 Part 모델과 충돌 방지).
+# parts 테이블은 PB-92 소관이라 ORM 모델을 두지 않는다(향후 Part 모델과 충돌 방지).
 # PART 블록 참조 검증용으로 필요한 컬럼만 Core table로 가볍게 매핑(읽기 전용).
 _parts = table(
     "parts",
@@ -128,7 +128,7 @@ async def _validate_part_refs(
 ) -> None:
     """PART 블록이 참조하는 파츠가 내 워크스페이스에 살아있는지 확인. 없으면 422.
 
-    파츠 생성 경로(PB-89)가 아직 없어 현 단계에선 PART 블록이 사실상 막힌다(정상).
+    파츠 생성 경로(PB-92)가 아직 없어 현 단계에선 PART 블록이 사실상 막힌다(정상).
     """
     part_ids = [b.part_id for b in blocks if b.block_type == BlockType.PART]
     if not part_ids:
@@ -217,14 +217,14 @@ async def _detail(session: AsyncSession, prompt: Prompt) -> PromptDetailResponse
 def _assemble_text(blocks: list[PromptBlock]) -> str:
     """블록을 순서대로 이어붙인 원본 텍스트(줄바꿈 구분).
 
-    INLINE = inline_body. PART = 파츠 본문 병합이 필요하나 파츠 생성 경로(PB-89)가
+    INLINE = inline_body. PART = 파츠 본문 병합이 필요하나 파츠 생성 경로(PB-92)가
     없어 현재 저장 가능한 프롬프트엔 PART 블록이 없다. 방어적으로 빈 조각 처리.
     """
     pieces: list[str] = []
     for b in blocks:
         if b.block_type == BlockType.INLINE:
             pieces.append(b.inline_body or "")
-        else:  # PART — TODO(PB-89): 참조 파츠 본문 삽입 + 변수 병합/충돌(has_conflict)
+        else:  # PART — TODO(PB-92): 참조 파츠 본문 삽입 + 변수 병합/충돌(has_conflict)
             pieces.append("")
     return "\n".join(pieces)
 

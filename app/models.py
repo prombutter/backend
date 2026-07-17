@@ -222,7 +222,7 @@ class PromptBlock(Base):
         UUID(as_uuid=True), ForeignKey("prompts.id"), nullable=False
     )
     # part_id: block_type=PART 일 때만. DB엔 fk_prompt_blocks_part(→parts.id)가 있으나
-    # parts 모델은 PB-89 소관이라 ORM엔 매핑하지 않는다(있으면 flush 시 FK 해석 실패).
+    # parts 모델은 PB-92 소관이라 ORM엔 매핑하지 않는다(있으면 flush 시 FK 해석 실패).
     # 참조 존재/소유 검증은 라우터의 _validate_part_refs가 담당.
     part_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     inline_body: Mapped[str | None] = mapped_column(String(700))  # block_type=INLINE 일 때 (700자)
