@@ -46,6 +46,7 @@ CLAUDE.md
 CLAUDE.local.md
 AGENTS.md
 AGENTS.local.md
+ARCHITECTURE.md
 .claude/
 
 # 환경 변수·시크릿
@@ -62,6 +63,7 @@ AGENTS.local.md
 *.cert
 *.crt
 credentials.json
+secrets.json
 service-account*.json
 firebase-service-account*.json
 *-firebase-adminsdk-*.json
