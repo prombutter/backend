@@ -112,3 +112,13 @@ Docs/
 # 위 *.sql 전역 무시를 db/migrations 하위에 한해 해제
 !db/migrations/
 !db/migrations/*.sql
+
+firebase-adminsdk*.json
+serviceAccountKey*.json
+
+# 패키지 레지스트리·범용 인증 설정 (auth token 평문 — SSOT git_민감파일관리.md v1.3.0)
+.npmrc
+.yarnrc.yml
+.pypirc
+.netrc
+_netrc
