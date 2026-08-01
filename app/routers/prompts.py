@@ -123,31 +123,45 @@ async def _get_active_prompt(
     return prompt
 
 
-async def _validate_part_refs(
+async def _validate_part_refs_and_vars(
     session: AsyncSession, workspace_id: uuid.UUID, blocks: list[BlockInput]
 ) -> None:
-    """PART 블록이 참조하는 파츠가 내 워크스페이스에 살아있는지 확인. 없으면 422.
-
-    파츠 생성 경로(PB-92)가 아직 없어 현 단계에선 PART 블록이 사실상 막힌다(정상).
-    """
+    """PART 블록이 참조하는 파츠가 존재하는지 확인하고, 프롬프트의 고유 변수가 20개를 초과하지 않는지 검사."""
     part_ids = [b.part_id for b in blocks if b.block_type == BlockType.PART]
-    if not part_ids:
-        return
-    valid = set(
-        await session.scalars(
-            select(_parts.c.id).where(
-                _parts.c.id.in_(part_ids),
-                _parts.c.workspace_id == workspace_id,
-                _parts.c.deleted_at.is_(None),
+    part_bodies = {}
+    if part_ids:
+        parts_result = await session.execute(
+            select(Part.id, Part.body).where(
+                Part.id.in_(part_ids),
+                Part.workspace_id == workspace_id,
+                Part.deleted_at.is_(None),
             )
         )
-    )
-    missing = [pid for pid in part_ids if pid not in valid]
-    if missing:
+        for row in parts_result.all():
+            part_bodies[row.id] = row.body
+
+        missing = [pid for pid in part_ids if pid not in part_bodies]
+        if missing:
+            raise AppError(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "ERR-BLOCK-INVALID-PART",
+                f"참조한 파츠를 찾을 수 없어요: {missing[0]}",
+            )
+
+    # 변수 상한 검사
+    text_content = ""
+    for b in blocks:
+        if b.block_type == BlockType.INLINE:
+            text_content += (b.inline_body or "") + "\n"
+        elif b.block_type == BlockType.PART and b.part_id:
+            text_content += (part_bodies.get(b.part_id) or "") + "\n"
+            
+    unique_vars = _extract_var_names(text_content)
+    if len(unique_vars) > 20:
         raise AppError(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "ERR-BLOCK-INVALID-PART",
-            f"참조한 파츠를 찾을 수 없어요: {missing[0]}",
+            "ERR-VAR-003",
+            "이 프롬프트의 서로 다른 변수가 20개를 넘어요. 블록을 줄이거나 변수를 통합해 주세요.",
         )
 
 
@@ -266,7 +280,7 @@ async def create_prompt(
             "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
         )
     _validate_blocks(body.blocks)
-    await _validate_part_refs(session, workspace.id, body.blocks)
+    await _validate_part_refs_and_vars(session, workspace.id, body.blocks)
     prompt = Prompt(workspace_id=workspace.id, title=body.title)
     session.add(prompt)
     await session.flush()  # prompt.id 확보 (블록 FK)
@@ -340,7 +354,7 @@ async def update_prompt(
 
     if body.blocks is not None:  # 통째로 교체(생략이면 유지). []면 전부 삭제
         _validate_blocks(body.blocks)
-        await _validate_part_refs(session, workspace.id, body.blocks)
+        await _validate_part_refs_and_vars(session, workspace.id, body.blocks)
         await session.execute(delete(PromptBlock).where(PromptBlock.prompt_id == prompt.id))
         session.add_all(_build_blocks(prompt.id, body.blocks))
         changed = True

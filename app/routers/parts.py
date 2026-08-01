@@ -1,7 +1,7 @@
 import re
 import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 
@@ -11,7 +11,7 @@ from app.models import Workspace
 from app.models.parts import Part, Tag, EntityTag
 from app.models import Variable
 from app.schemas.parts import PartCreate, PartUpdate, PartResponse
-
+from app.core.errors import AppError
 router = APIRouter(prefix="/workspaces/{workspace_id}/parts", tags=["Parts"])
 
 async def extract_and_save_variables(session: AsyncSession, entity_id: uuid.UUID, body: str) -> int:
@@ -19,7 +19,11 @@ async def extract_and_save_variables(session: AsyncSession, entity_id: uuid.UUID
     vars = [v for v in vars if v]
     
     if len(vars) > 10:
-        raise HTTPException(status_code=422, detail="ERR-VAR-002: 파츠당 고유 변수는 최대 10개까지만 사용할 수 있어요.")
+        raise AppError(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "ERR-VAR-002",
+            "파츠당 고유 변수는 최대 10개까지만 사용할 수 있어요.",
+        )
         
     await session.execute(Variable.__table__.delete().where(
         Variable.entity_id == entity_id,
@@ -162,7 +166,11 @@ async def toggle_favorite_part(
         # 즐겨찾기 추가 시 50개 제한 검사
         fav_count = await session.scalar(select(func.count()).select_from(Part).where(Part.workspace_id == workspace.id, Part.is_favorite == True, Part.deleted_at.is_(None)))
         if fav_count >= 50:
-            raise HTTPException(status_code=422, detail="ERR-FAV-001: 즐겨찾기는 최대 50개까지만 등록할 수 있어요.")
+            raise AppError(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "ERR-FAV-001",
+                "파츠 즐겨찾기는 50개까지 등록할 수 있어요. 일부를 해제한 뒤 다시 시도해 주세요.",
+            )
             
     part.is_favorite = not part.is_favorite
     await session.commit()

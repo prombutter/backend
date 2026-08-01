@@ -60,12 +60,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to Render
+      - name: Set target environment
+        id: env-setter
         run: |
-          if [ -z "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ]; then
-            echo "Error: RENDER_DEPLOY_HOOK_URL secret is not set."
-            exit 1
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "ENV_NAME=production" >> $GITHUB_ENV
+            echo "SERVICE_NAME=prombutter-api-prod" >> $GITHUB_ENV
+          else
+            echo "ENV_NAME=staging" >> $GITHUB_ENV
+            echo "SERVICE_NAME=prombutter-api-staging" >> $GITHUB_ENV
           fi
-          echo "Triggering Render deployment via Deploy Hook..."
-          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
-          echo "Deployment triggered successfully."
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          echo "APP_ENV: '${ENV_NAME}'" > env.yaml
+          echo "SECRET_KEY: '${{ secrets.SECRET_KEY }}'" >> env.yaml
+          echo "DATABASE_URL: '${{ secrets.DATABASE_URL }}'" >> env.yaml
+          echo "CORS_ORIGINS: '${{ secrets.CORS_ORIGINS }}'" >> env.yaml
+          
+          gcloud run deploy $SERVICE_NAME \
+            --source . \
+            --region asia-northeast3 \
+            --allow-unauthenticated \
+            --env-vars-file=env.yaml
+          
+          echo "Deployment to $ENV_NAME triggered successfully."
