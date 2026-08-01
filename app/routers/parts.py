@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 
 from app.db import get_session
+from app.deps import get_path_workspace
+from app.models import Workspace
 from app.models.parts import Part, Tag, EntityTag
 from app.models import Variable
 from app.schemas.parts import PartCreate, PartUpdate, PartResponse
@@ -13,8 +15,12 @@ from app.schemas.parts import PartCreate, PartUpdate, PartResponse
 router = APIRouter(prefix="/workspaces/{workspace_id}/parts", tags=["Parts"])
 
 async def extract_and_save_variables(session: AsyncSession, entity_id: uuid.UUID, body: str) -> int:
-    vars = list(set(re.findall(r"\{\{([^}]+)\}\}", body)))
+    vars = [v.strip() for v in list(set(re.findall(r"\{\{([\s\S]+?)\}\}", body)))]
+    vars = [v for v in vars if v]
     
+    if len(vars) > 10:
+        raise HTTPException(status_code=422, detail="ERR-VAR-002: 파츠당 고유 변수는 최대 10개까지만 사용할 수 있어요.")
+        
     await session.execute(Variable.__table__.delete().where(
         Variable.entity_id == entity_id,
         Variable.entity_type == 'part'
@@ -35,11 +41,11 @@ async def handle_tags(session: AsyncSession, workspace_id: uuid.UUID, entity_id:
     ))
     
     for tag_name in tags:
-        stmt = select(Tag).where(Tag.workspace_id == workspace_id, Tag.name == tag_name)
+        stmt = select(Tag).where(Tag.workspace_id == workspace.id, Tag.name == tag_name)
         result = await session.execute(stmt)
         tag = result.scalar_one_or_none()
         if not tag:
-            tag = Tag(workspace_id=workspace_id, name=tag_name)
+            tag = Tag(workspace_id=workspace.id, name=tag_name)
             session.add(tag)
             await session.flush()
         
@@ -64,12 +70,17 @@ async def _get_part_with_metadata(session: AsyncSession, part: Part) -> PartResp
 
 @router.post("", response_model=PartResponse)
 async def create_part(
-    workspace_id: uuid.UUID,
     part_in: PartCreate, 
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
+    # 중복 제목 검사
+    existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
+    if existing:
+        raise HTTPException(status_code=409, detail="ERR-PART-DUP: 이미 동일한 이름의 파츠가 있습니다.")
+        
     new_part = Part(
-        workspace_id=workspace_id,
+        workspace_id=workspace.id,
         title=part_in.title,
         body=part_in.body
     )
@@ -77,7 +88,7 @@ async def create_part(
     await session.flush()
     
     var_count = await extract_and_save_variables(session, new_part.id, part_in.body)
-    await handle_tags(session, workspace_id, new_part.id, part_in.tags)
+    await handle_tags(session, workspace.id, new_part.id, part_in.tags)
     
     await session.commit()
     await session.refresh(new_part)
@@ -88,12 +99,11 @@ async def create_part(
     return resp
 
 @router.post("/{id}/restore", response_model=PartResponse)
-async def restore_part(
-    workspace_id: uuid.UUID,
-    id: uuid.UUID,
+async def restore_part(id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
-    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace_id, Part.deleted_at.is_not(None))
+    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace.id, Part.deleted_at.is_not(None))
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
@@ -105,12 +115,11 @@ async def restore_part(
     return await _get_part_with_metadata(session, part)
 
 @router.delete("/{id}")
-async def delete_part(
-    workspace_id: uuid.UUID,
-    id: uuid.UUID,
+async def delete_part(id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
-    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace_id, Part.deleted_at.is_(None))
+    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace.id, Part.deleted_at.is_(None))
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
@@ -121,12 +130,11 @@ async def delete_part(
     return {"success": True, "message": "Part soft-deleted successfully"}
 
 @router.delete("/{id}/permanent")
-async def permanent_delete_part(
-    workspace_id: uuid.UUID,
-    id: uuid.UUID,
+async def permanent_delete_part(id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
-    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace_id, Part.deleted_at.is_not(None))
+    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace.id, Part.deleted_at.is_not(None))
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
@@ -140,16 +148,22 @@ async def permanent_delete_part(
 
 @router.post("/{id}/favorite", response_model=PartResponse)
 async def toggle_favorite_part(
-    workspace_id: uuid.UUID,
     id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
-    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace_id, Part.deleted_at.is_(None))
+    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace.id, Part.deleted_at.is_(None))
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
         
+    if not part.is_favorite:
+        # 즐겨찾기 추가 시 50개 제한 검사
+        fav_count = await session.scalar(select(func.count()).select_from(Part).where(Part.workspace_id == workspace.id, Part.is_favorite == True, Part.deleted_at.is_(None)))
+        if fav_count >= 50:
+            raise HTTPException(status_code=422, detail="ERR-FAV-001: 즐겨찾기는 최대 50개까지만 등록할 수 있어요.")
+            
     part.is_favorite = not part.is_favorite
     await session.commit()
     await session.refresh(part)
@@ -157,13 +171,13 @@ async def toggle_favorite_part(
 
 @router.get("", response_model=list[PartResponse])
 async def list_parts(
-    workspace_id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
     is_deleted: bool = Query(False, description="Filter for deleted (trash) items"),
     is_favorite: bool | None = Query(None, description="Filter for favorite items"),
     q: str | None = Query(None, description="Search by title or body"),
     session: AsyncSession = Depends(get_session)
 ):
-    stmt = select(Part).where(Part.workspace_id == workspace_id)
+    stmt = select(Part).where(Part.workspace_id == workspace.id)
     if is_deleted:
         stmt = stmt.where(Part.deleted_at.is_not(None))
     else:
@@ -182,12 +196,11 @@ async def list_parts(
     return resp_list
 
 @router.get("/{id}", response_model=PartResponse)
-async def get_part(
-    workspace_id: uuid.UUID,
-    id: uuid.UUID,
+async def get_part(id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
-    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace_id, Part.deleted_at.is_(None))
+    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace.id, Part.deleted_at.is_(None))
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
@@ -196,19 +209,21 @@ async def get_part(
     return await _get_part_with_metadata(session, part)
 
 @router.patch("/{id}", response_model=PartResponse)
-async def update_part(
-    workspace_id: uuid.UUID,
-    id: uuid.UUID,
+async def update_part(id: uuid.UUID,
     part_in: PartUpdate,
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
-    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace_id, Part.deleted_at.is_(None))
+    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace.id, Part.deleted_at.is_(None))
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
         
-    if part_in.title is not None:
+    if part_in.title is not None and part_in.title != part.title:
+        existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
+        if existing:
+            raise HTTPException(status_code=409, detail="ERR-PART-DUP: 이미 동일한 이름의 파츠가 있습니다.")
         part.title = part_in.title
     if part_in.body is not None:
         part.body = part_in.body
@@ -219,7 +234,7 @@ async def update_part(
         await extract_and_save_variables(session, part.id, part_in.body)
         
     if part_in.tags is not None:
-        await handle_tags(session, workspace_id, part.id, part_in.tags)
+        await handle_tags(session, workspace.id, part.id, part_in.tags)
         
     await session.commit()
     await session.refresh(part)
@@ -227,19 +242,18 @@ async def update_part(
     return await _get_part_with_metadata(session, part)
 
 @router.post("/{id}/duplicate", response_model=PartResponse)
-async def duplicate_part(
-    workspace_id: uuid.UUID,
-    id: uuid.UUID,
+async def duplicate_part(id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
-    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace_id, Part.deleted_at.is_(None))
+    stmt = select(Part).where(Part.id == id, Part.workspace_id == workspace.id, Part.deleted_at.is_(None))
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
         
     new_part = Part(
-        workspace_id=workspace_id,
+        workspace_id=workspace.id,
         title=f"{part.title} (Copy)",
         body=part.body,
         is_favorite=part.is_favorite
@@ -252,7 +266,7 @@ async def duplicate_part(
     stmt_tags = select(Tag.name).join(EntityTag, Tag.id == EntityTag.tag_id).where(EntityTag.entity_id == id)
     tags_res = await session.execute(stmt_tags)
     tags = list(tags_res.scalars().all())
-    await handle_tags(session, workspace_id, new_part.id, tags)
+    await handle_tags(session, workspace.id, new_part.id, tags)
     
     await session.commit()
     await session.refresh(new_part)

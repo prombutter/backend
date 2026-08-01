@@ -214,18 +214,19 @@ async def _detail(session: AsyncSession, prompt: Prompt) -> PromptDetailResponse
     )
 
 
-def _assemble_text(blocks: list[PromptBlock]) -> str:
-    """블록을 순서대로 이어붙인 원본 텍스트(줄바꿈 구분).
-
-    INLINE = inline_body. PART = 파츠 본문 병합이 필요하나 파츠 생성 경로(PB-92)가
-    없어 현재 저장 가능한 프롬프트엔 PART 블록이 없다. 방어적으로 빈 조각 처리.
-    """
+async def _assemble_text(session: AsyncSession, blocks: list[PromptBlock]) -> str:
+    """블록을 순서대로 이어붙인 원본 텍스트(줄바꿈 구분)."""
     pieces: list[str] = []
     for b in blocks:
         if b.block_type == BlockType.INLINE:
             pieces.append(b.inline_body or "")
-        else:  # PART — TODO(PB-92): 참조 파츠 본문 삽입 + 변수 병합/충돌(has_conflict)
-            pieces.append("")
+        else:
+            if b.part_id:
+                stmt = select(Part.body).where(Part.id == b.part_id)
+                body = await session.scalar(stmt)
+                pieces.append(body or "")
+            else:
+                pieces.append("")
     return "\n".join(pieces)
 
 
@@ -429,7 +430,7 @@ async def get_prompt_variables(
     """프롬프트 블록에서 뽑은 변수명 목록(첫 등장 순). 익스텐션 변수 입력 폼용."""
     prompt = await _get_active_prompt(session, workspace, prompt_id)
     blocks = await _load_blocks(session, prompt.id)
-    return VariablesResponse(variables=_extract_var_names(_assemble_text(blocks)))
+    return VariablesResponse(variables=_extract_var_names(await _assemble_text(session, blocks)))
 
 
 @router.post("/{prompt_id}/render", response_model=RenderResponse)
@@ -443,5 +444,5 @@ async def render_prompt(
     값이 없는 변수는 자리표시자로 남고 missing에 담긴다(렌더는 실패하지 않음)."""
     prompt = await _get_active_prompt(session, workspace, prompt_id)
     blocks = await _load_blocks(session, prompt.id)
-    rendered, missing = _render_text(_assemble_text(blocks), body.variables)
+    rendered, missing = _render_text(await _assemble_text(session, blocks), body.variables)
     return RenderResponse(rendered=rendered, missing=missing)
