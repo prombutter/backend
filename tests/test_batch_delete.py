@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.models import Prompt, Variable, PromptBlock
-from app.models.parts import Part, EntityTag
+from app.models.parts import Part, EntityTag, Tag
 from app.db import SessionLocal
 from app.batch.hard_delete import run_hard_delete
 
@@ -57,7 +57,10 @@ async def test_hard_delete_removes_old_data(async_session, default_workspace):
     
     # 4. 종속 데이터 추가
     old_var = Variable(entity_type='PART', entity_id=old_part.id, name='var1')
-    old_tag = EntityTag(entity_type='PROMPT', entity_id=old_prompt.id, tag='test')
+    old_tag_record = Tag(workspace_id=default_workspace.id, name='test')
+    async_session.add(old_tag_record)
+    await async_session.flush()
+    old_tag = EntityTag(entity_type='PROMPT', entity_id=old_prompt.id, tag_id=old_tag_record.id)
     old_block = PromptBlock(prompt_id=old_prompt.id, sort_order=1, block_type='INLINE', inline_body='test block')
     async_session.add_all([old_var, old_tag, old_block])
     

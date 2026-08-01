@@ -23,7 +23,7 @@ async def extract_and_save_variables(session: AsyncSession, entity_id: uuid.UUID
         
     await session.execute(Variable.__table__.delete().where(
         Variable.entity_id == entity_id,
-        Variable.entity_type == 'part'
+        Variable.entity_type == 'PART'
     ))
     
     for v in vars:
@@ -37,7 +37,7 @@ async def handle_tags(session: AsyncSession, workspace_id: uuid.UUID, entity_id:
     
     await session.execute(EntityTag.__table__.delete().where(
         EntityTag.entity_id == entity_id,
-        EntityTag.entity_type == 'part'
+        EntityTag.entity_type == 'PART'
     ))
     
     for tag_name in tags:
@@ -54,7 +54,7 @@ async def handle_tags(session: AsyncSession, workspace_id: uuid.UUID, entity_id:
 
 async def _get_part_with_metadata(session: AsyncSession, part: Part) -> PartResponse:
     # Get variable count
-    stmt_vc = select(func.count()).where(Variable.entity_id == part.id, Variable.entity_type == 'part')
+    stmt_vc = select(func.count()).where(Variable.entity_id == part.id, Variable.entity_type == 'PART')
     vc_res = await session.execute(stmt_vc)
     var_count = vc_res.scalar_one()
 
@@ -140,8 +140,8 @@ async def permanent_delete_part(id: uuid.UUID,
     if not part:
         raise HTTPException(status_code=404, detail="Part not found in trash")
         
-    await session.execute(EntityTag.__table__.delete().where(EntityTag.entity_id == id, EntityTag.entity_type == 'part'))
-    await session.execute(Variable.__table__.delete().where(Variable.entity_id == id, Variable.entity_type == 'part'))
+    await session.execute(EntityTag.__table__.delete().where(EntityTag.entity_id == id, EntityTag.entity_type == 'PART'))
+    await session.execute(Variable.__table__.delete().where(Variable.entity_id == id, Variable.entity_type == 'PART'))
     await session.delete(part)
     await session.commit()
     return {"success": True, "message": "Part permanently deleted"}
