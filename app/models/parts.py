@@ -30,9 +30,4 @@ class EntityTag(Base):
     entity_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     tag_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("tags.id"), primary_key=True)
 
-class Variable(Base):
-    __tablename__ = "variables"
-    entity_type: Mapped[str] = mapped_column(String, primary_key=True)
-    entity_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    name: Mapped[str] = mapped_column(String, primary_key=True)
-    has_conflict: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+

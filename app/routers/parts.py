@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 
 from app.db import get_session
-from app.models.parts import Part, Tag, EntityTag, Variable
+from app.models.parts import Part, Tag, EntityTag
+from app.models import Variable
 from app.schemas.parts import PartCreate, PartUpdate, PartResponse
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/parts", tags=["Parts"])

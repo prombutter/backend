@@ -26,8 +26,7 @@ from sqlalchemy.dialects.postgresql import BYTEA, CITEXT, ENUM, INET, TIMESTAMP,
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-class Base(DeclarativeBase):
-    """모든 모델의 베이스. db.py의 async 엔진과 함께 쓴다."""
+from .base import Base
 
 
 # ===== Enum (DB의 PG enum 타입과 1:1) =====
