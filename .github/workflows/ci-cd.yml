@@ -81,12 +81,15 @@ jobs:
 
       - name: Deploy to Cloud Run
         run: |
-          echo "Deploying to $ENV_NAME environment (Service: $SERVICE_NAME)"
+          echo "APP_ENV: '${ENV_NAME}'" > env.yaml
+          echo "SECRET_KEY: '${{ secrets.SECRET_KEY }}'" >> env.yaml
+          echo "DATABASE_URL: '${{ secrets.DATABASE_URL }}'" >> env.yaml
+          echo "CORS_ORIGINS: '${{ secrets.CORS_ORIGINS }}'" >> env.yaml
           
           gcloud run deploy $SERVICE_NAME \
             --source . \
             --region asia-northeast3 \
             --allow-unauthenticated \
-            --set-env-vars="^@^APP_ENV=$ENV_NAME@SECRET_KEY=${{ secrets.SECRET_KEY }}@DATABASE_URL=${{ secrets.DATABASE_URL }}@CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}"
+            --env-vars-file=env.yaml
           
           echo "Deployment to $ENV_NAME triggered successfully."
