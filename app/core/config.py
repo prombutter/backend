@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 10080  # RT 7일
     BCRYPT_ROUNDS: int = 12
     COOKIE_SECURE: bool = False
+    # 비밀번호 재설정 토큰을 콘솔에 찍을지. 이메일 발송이 아직 없어 개발 중에는 이것이 유일한
+    # 전달 경로지만, 운영에서 stdout 은 곧 로그 수집기다. 로그 열람 권한이 계정 탈취 경로가
+    # 되지 않도록 기본은 꺼 둔다 — 켜는 것은 개발자가 명시할 때만이다.
+    EXPOSE_RESET_TOKEN: bool = False
 
     # --- Database ---
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost/dbname"
