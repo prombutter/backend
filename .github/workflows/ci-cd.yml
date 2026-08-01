@@ -20,20 +20,17 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies (using uv)
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          $HOME/.local/bin/uv venv
-          source .venv/bin/activate
-          $HOME/.local/bin/uv pip install -e .[test] || $HOME/.local/bin/uv pip install -r pyproject.toml
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
 
       - name: Run Pytest
         env:
           SECRET_KEY: test_secret_key_for_ci
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
         run: |
-          source .venv/bin/activate
-          pytest tests/
+          uv run pytest tests/
 
   deploy:
     name: Deploy to GCP
