@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from app.config import settings
+from app.core.config import settings
 
 
 def _fernet() -> Fernet | None:
-    key = (settings.oauth_token_key or "").strip()
+    key = (settings.OAUTH_TOKEN_KEY or "").strip()
     if not key:
         return None
     try:
@@ -22,7 +22,6 @@ def encrypt_token(plaintext: str | None) -> bytes | None:
         return None
     f = _fernet()
     if f is None:
-        # 키 미설정 시 원문 저장 금지 — 토큰 보관 생략
         return None
     return f.encrypt(plaintext.encode("utf-8"))
 

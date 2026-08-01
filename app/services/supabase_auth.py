@@ -1,4 +1,4 @@
-"""Supabase Auth (GoTrue) HTTP 클라이언트 — OAuth PKCE / user 조회."""
+"""Supabase Auth (GoTrue) — Google OAuth PKCE / user 조회."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from app.config import settings
+from app.core.config import settings
 
 
 class SupabaseAuthError(Exception):
@@ -21,7 +21,7 @@ class SupabaseAuthError(Exception):
 
 
 def _require_supabase() -> None:
-    if not settings.supabase_url or not settings.supabase_anon_key:
+    if not settings.supabase_oauth_ready:
         raise SupabaseAuthError(
             "SUPABASE_URL and SUPABASE_ANON_KEY must be set for OAuth.",
             status_code=503,
@@ -29,7 +29,6 @@ def _require_supabase() -> None:
 
 
 def generate_pkce_pair() -> tuple[str, str]:
-    """(code_verifier, code_challenge S256)."""
     verifier = secrets.token_urlsafe(64)
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -52,12 +51,12 @@ def build_authorize_url(
     }
     if scopes:
         params["scopes"] = scopes
-    base = settings.supabase_url.rstrip("/")
+    base = settings.SUPABASE_URL.rstrip("/")
     return f"{base}/auth/v1/authorize?{urlencode(params)}"
 
 
 def _headers() -> dict[str, str]:
-    key = settings.supabase_anon_key
+    key = settings.SUPABASE_ANON_KEY
     return {
         "apikey": key,
         "Authorization": f"Bearer {key}",
@@ -66,9 +65,8 @@ def _headers() -> dict[str, str]:
 
 
 async def exchange_code_for_session(*, auth_code: str, code_verifier: str) -> dict[str, Any]:
-    """PKCE auth code → Supabase session (access_token, refresh_token, user)."""
     _require_supabase()
-    base = settings.supabase_url.rstrip("/")
+    base = settings.SUPABASE_URL.rstrip("/")
     url = f"{base}/auth/v1/token?grant_type=pkce"
     payload = {"auth_code": auth_code, "code_verifier": code_verifier}
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -86,12 +84,11 @@ async def exchange_code_for_session(*, auth_code: str, code_verifier: str) -> di
 
 
 async def get_user(access_token: str) -> dict[str, Any]:
-    """Supabase access_token 으로 사용자 조회."""
     _require_supabase()
-    base = settings.supabase_url.rstrip("/")
+    base = settings.SUPABASE_URL.rstrip("/")
     url = f"{base}/auth/v1/user"
     headers = {
-        "apikey": settings.supabase_anon_key,
+        "apikey": settings.SUPABASE_ANON_KEY,
         "Authorization": f"Bearer {access_token}",
     }
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -105,41 +102,10 @@ async def get_user(access_token: str) -> dict[str, Any]:
     return resp.json()
 
 
-async def revoke_provider_token(access_token: str) -> None:
-    """Supabase 세션 logout (best-effort)."""
-    if not settings.supabase_url or not settings.supabase_anon_key:
-        return
-    base = settings.supabase_url.rstrip("/")
-    url = f"{base}/auth/v1/logout"
-    headers = {
-        "apikey": settings.supabase_anon_key,
-        "Authorization": f"Bearer {access_token}",
-    }
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(url, headers=headers)
-    except httpx.HTTPError:
-        return
-
-
-def _safe_json(resp: httpx.Response) -> Any:
-    try:
-        return resp.json()
-    except Exception:
-        return resp.text
-
-
 def extract_google_profile(supabase_user: dict[str, Any]) -> dict[str, str]:
-    """
-    Supabase user JSON → 앱 매핑용 필드.
-    Google identity 가 반드시 있어야 하며 provider_user_id 는 Google sub 우선.
-    """
     email = (supabase_user.get("email") or "").strip().lower()
     meta = supabase_user.get("user_metadata") or {}
-    name = (
-        (meta.get("full_name") or meta.get("name") or meta.get("preferred_username") or "")
-        .strip()
-    )
+    name = (meta.get("full_name") or meta.get("name") or meta.get("preferred_username") or "").strip()
     if not name and email:
         name = email.split("@", 1)[0]
     if not name:
@@ -151,7 +117,6 @@ def extract_google_profile(supabase_user: dict[str, Any]) -> dict[str, str]:
             google_identity = identity
             break
     if google_identity is None:
-        # app_metadata.provider 폴백 (일부 응답 형태)
         if (supabase_user.get("app_metadata") or {}).get("provider") != "google":
             raise SupabaseAuthError(
                 "Supabase user is not linked to Google. Use Google OAuth provider.",
@@ -168,7 +133,10 @@ def extract_google_profile(supabase_user: dict[str, Any]) -> dict[str, str]:
             name = (data.get("full_name") or data.get("name") or name).strip() or name
 
     if not email:
-        raise SupabaseAuthError("OAuth user has no email; enable email scope for Google.", status_code=400)
+        raise SupabaseAuthError(
+            "OAuth user has no email; enable email scope for Google.",
+            status_code=400,
+        )
     if not provider_user_id:
         raise SupabaseAuthError("OAuth user missing provider id.", status_code=400)
 
@@ -178,3 +146,10 @@ def extract_google_profile(supabase_user: dict[str, Any]) -> dict[str, str]:
         "provider_user_id": provider_user_id,
         "supabase_user_id": str(supabase_user.get("id") or ""),
     }
+
+
+def _safe_json(resp: httpx.Response) -> Any:
+    try:
+        return resp.json()
+    except Exception:
+        return resp.text
