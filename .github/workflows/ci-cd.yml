@@ -87,6 +87,6 @@ jobs:
             --source . \
             --region asia-northeast3 \
             --allow-unauthenticated \
-            --set-env-vars="APP_ENV=$ENV_NAME,SECRET_KEY=${{ secrets.SECRET_KEY }},DATABASE_URL=${{ secrets.DATABASE_URL }},CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}"
+            --set-env-vars="^@^APP_ENV=$ENV_NAME@SECRET_KEY=${{ secrets.SECRET_KEY }}@DATABASE_URL=${{ secrets.DATABASE_URL }}@CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}"
           
           echo "Deployment to $ENV_NAME triggered successfully."
