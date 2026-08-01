@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.errors import AppError, app_error_handler, validation_error_handler
-from app.routers import auth, prompts, workspaces
+from app.routers import auth, parts, prompts, workspaces
 try:
     from app.routers import health
 except ImportError:
@@ -35,6 +35,7 @@ if health:
 app.include_router(auth.router)
 app.include_router(workspaces.router)
 app.include_router(prompts.router)
+app.include_router(parts.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():

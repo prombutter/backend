@@ -12,6 +12,7 @@ pytest 공용 fixture — PB-67
 import uuid
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
@@ -57,6 +58,16 @@ async def make_email():
                 await conn.execute(
                     text("delete from user_sessions where user_id=:u"), {"u": uid}
                 )
+                
+                # Parts 삭제 추가
+                await conn.execute(
+                    text(
+                        "delete from parts where workspace_id in "
+                        "(select id from workspaces where owner_id=:u)"
+                    ),
+                    {"u": uid},
+                )
+                
                 # 프롬프트 계열 먼저 정리 (workspaces FK 때문에 순서 중요): blocks → prompts
                 await conn.execute(
                     text(
@@ -80,3 +91,15 @@ async def make_email():
                 text("delete from login_attempts where email_hash=:h"),
                 {"h": hash_email(email)},
             )
+
+@pytest_asyncio.fixture(scope="function")
+async def test_workspace_id(client, make_email):
+    # 실제 DB에 유저와 워크스페이스를 만들어서 리턴
+    email = make_email()
+    password = "password123!"
+    r = await client.post("/auth/signup", json={"email": email, "password": password, "name": "Test"})
+    
+    # 쿠키가 세팅되어 있으므로 /workspaces 조회 가능
+    r_ws = await client.get("/workspaces")
+    ws_id = r_ws.json()["id"]
+    return uuid.UUID(ws_id)
