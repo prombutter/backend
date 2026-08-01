@@ -33,6 +33,7 @@ from app.core.errors import AppError
 from app.db import get_session
 from app.deps import get_path_workspace
 from app.models import BlockType, Prompt, PromptBlock, Workspace
+from app.models.parts import Part
 from app.schemas import (
     BlockInput,
     BlockResponse,
