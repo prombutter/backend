@@ -143,3 +143,12 @@ class RenderResponse(BaseModel):
 
 class VariablesResponse(BaseModel):
     variables: list[str]  # 프롬프트 블록에서 뽑은 변수명(첫 등장 순, 중복 제거)
+
+from pydantic import EmailStr, Field
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr = Field(..., description="이메일 주소")
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., description="재설정 토큰")
+    new_password: str = Field(..., min_length=8, description="새 비밀번호")

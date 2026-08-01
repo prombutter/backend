@@ -55,14 +55,16 @@ def _create_token(subject: str, token_type: str, expires_minutes: int, **extra) 
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def create_access_token(subject: str) -> str:
-    return _create_token(subject, ACCESS, settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+def create_access_token(subject: str, workspace_id: str | None = None) -> str:
+    extra = {} if not workspace_id else {"workspace_id": workspace_id}
+    return _create_token(subject, ACCESS, settings.ACCESS_TOKEN_EXPIRE_MINUTES, **extra)
 
 
-def create_refresh_token(subject: str) -> tuple[str, str]:
+def create_refresh_token(subject: str, workspace_id: str | None = None) -> tuple[str, str]:
     """리프레시 토큰과 그 jti를 반환. jti(고유 id)로 세션 추적·회전(rotation)에 사용."""
     jti = str(uuid.uuid4())
-    token = _create_token(subject, REFRESH, settings.REFRESH_TOKEN_EXPIRE_MINUTES, jti=jti)
+    extra = {"jti": jti} if not workspace_id else {"jti": jti, "workspace_id": workspace_id}
+    token = _create_token(subject, REFRESH, settings.REFRESH_TOKEN_EXPIRE_MINUTES, **extra)
     return token, jti
 
 

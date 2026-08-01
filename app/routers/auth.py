@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.core.cookies import REFRESH_COOKIE, clear_auth_cookies, set_auth_cookies
 from app.core.security import (
     REFRESH,
+    _create_token,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -31,7 +32,7 @@ from app.core.security import (
 from app.db import get_session
 from app.deps import get_current_user
 from app.models import LoginAttempt, User, UserSession, Workspace
-from app.schemas import LoginRequest, SignupRequest, UserResponse
+from app.schemas import LoginRequest, SignupRequest, UserResponse, ForgotPasswordRequest, ResetPasswordRequest
 
 _INVALID_CREDENTIALS = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
@@ -54,8 +55,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 async def _issue_session(session: AsyncSession, user: User, response: Response) -> None:
     """AT/RT 발급 → user_sessions에 RT 해시 저장 → 쿠키 심기. signup/login 공용."""
-    access_token = create_access_token(str(user.id))
-    refresh_token, _jti = create_refresh_token(str(user.id))
+    # 유저의 기본 워크스페이스 조회 (존재 시 토큰에 포함)
+    ws = await session.scalar(select(Workspace).where(Workspace.owner_id == user.id))
+    workspace_id = str(ws.id) if ws else None
+    
+    access_token = create_access_token(str(user.id), workspace_id=workspace_id)
+    refresh_token, _jti = create_refresh_token(str(user.id), workspace_id=workspace_id)
     expires_at = datetime.now(timezone.utc) + timedelta(
         minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES
     )
@@ -185,3 +190,55 @@ async def logout(
 @router.get("/me", response_model=UserResponse)
 async def me(user: User = Depends(get_current_user)) -> User:
     return user
+
+import logging
+logger = logging.getLogger(__name__)
+
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    user = await session.scalar(select(User).where(User.email == body.email))
+    if not user:
+        return {"detail": "If your email is registered, you will receive a password reset link."}
+        
+    # 임시 토큰 발급 (10분 만료)
+    reset_token = _create_token(str(user.id), "reset_password", 10)
+    
+    # 콘솔에 출력 (이메일 발송 대체)
+    logger.info(f"Password reset requested for {user.email}. Token: {reset_token}")
+    print(f"=====================================")
+    print(f"Password Reset Token for {user.email}")
+    print(f"Token: {reset_token}")
+    print(f"=====================================")
+    
+    return {"detail": "If your email is registered, you will receive a password reset link."}
+
+
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+async def reset_password(
+    body: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    try:
+        payload = decode_token(body.token)
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        
+    if payload.get("type") != "reset_password":
+        raise HTTPException(status_code=400, detail="Invalid token type")
+        
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid token payload")
+        
+    import uuid
+    user = await session.get(User, uuid.UUID(user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    user.password_hash = hash_password(body.new_password)
+    await session.commit()
+    
+    return {"detail": "Password has been successfully reset."}

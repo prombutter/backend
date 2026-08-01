@@ -9,9 +9,10 @@ class Settings(BaseSettings):
     # --- Security / Auth ---
     SECRET_KEY: str = "supersecretkey"  # ⚠️ 운영에선 반드시 .env에서 강한 랜덤값으로 덮어쓸 것
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15      # AT 15분
-    REFRESH_TOKEN_EXPIRE_MINUTES: int = 180    # RT 3시간
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60      # AT 1시간
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 10080    # RT 7일
     BCRYPT_ROUNDS: int = 12
+    COOKIE_SECURE: bool = False
 
     # --- Database ---
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost/dbname"

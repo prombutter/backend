@@ -16,7 +16,7 @@ ACCESS_COOKIE = "access_token"
 REFRESH_COOKIE = "refresh_token"
 
 # 로컬 개발 기준. 배포 시 secure=True, samesite="none"(크로스 도메인) 등 조정 필요.
-_COOKIE_SECURE = False
+_COOKIE_SECURE = settings.COOKIE_SECURE
 _COOKIE_SAMESITE = "lax"
 _COOKIE_PATH = "/"
 
