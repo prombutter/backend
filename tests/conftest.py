@@ -79,6 +79,35 @@ async def make_email():
                 )
                 await conn.execute(
                     text(
+                        "delete from prompt_blocks where prompt_id in "
+                        "(select id from prompts where workspace_id in (select id from workspaces where owner_id=:u))"
+                    ),
+                    {"u": uid},
+                )
+                await conn.execute(
+                    text(
+                        "delete from variables where entity_id in "
+                        "(select id from prompts where workspace_id in (select id from workspaces where owner_id=:u)) "
+                        "or entity_id in (select id from parts where workspace_id in (select id from workspaces where owner_id=:u))"
+                    ),
+                    {"u": uid},
+                )
+                await conn.execute(
+                    text(
+                        "delete from entity_tags where tag_id in "
+                        "(select id from tags where workspace_id in (select id from workspaces where owner_id=:u))"
+                    ),
+                    {"u": uid},
+                )
+                await conn.execute(
+                    text(
+                        "delete from tags where workspace_id in "
+                        "(select id from workspaces where owner_id=:u)"
+                    ),
+                    {"u": uid},
+                )
+                await conn.execute(
+                    text(
                         "delete from prompts where workspace_id in "
                         "(select id from workspaces where owner_id=:u)"
                     ),
@@ -86,7 +115,7 @@ async def make_email():
                 )
                 await conn.execute(
                     text(
-                        "delete from tags where workspace_id in "
+                        "delete from parts where workspace_id in "
                         "(select id from workspaces where owner_id=:u)"
                     ),
                     {"u": uid},
