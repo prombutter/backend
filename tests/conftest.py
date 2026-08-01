@@ -84,6 +84,13 @@ async def make_email():
                     ),
                     {"u": uid},
                 )
+                await conn.execute(
+                    text(
+                        "delete from tags where workspace_id in "
+                        "(select id from workspaces where owner_id=:u)"
+                    ),
+                    {"u": uid},
+                )
                 await conn.execute(text("delete from workspaces where owner_id=:u"), {"u": uid})
                 await conn.execute(text("delete from users where id=:u"), {"u": uid})
             # login_attempts는 email_hash만 저장하므로 해시로 매칭해 삭제

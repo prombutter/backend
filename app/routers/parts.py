@@ -41,11 +41,11 @@ async def handle_tags(session: AsyncSession, workspace_id: uuid.UUID, entity_id:
     ))
     
     for tag_name in tags:
-        stmt = select(Tag).where(Tag.workspace_id == workspace.id, Tag.name == tag_name)
+        stmt = select(Tag).where(Tag.workspace_id == workspace_id, Tag.name == tag_name)
         result = await session.execute(stmt)
         tag = result.scalar_one_or_none()
         if not tag:
-            tag = Tag(workspace_id=workspace.id, name=tag_name)
+            tag = Tag(workspace_id=workspace_id, name=tag_name)
             session.add(tag)
             await session.flush()
         
