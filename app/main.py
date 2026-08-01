@@ -1,51 +1,57 @@
-from fastapi import FastAPI, Request, Response
+from datetime import datetime, timezone
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
-from app.config import settings
-from app.routers import auth, health
+from app.core.config import settings
+from app.core.errors import AppError, app_error_handler, validation_error_handler
+from app.routers import auth, parts, prompts, workspaces
+try:
+    from app.routers import health
+except ImportError:
+    health = None
 
 app = FastAPI(
-    title="PromButter API",
-    version="0.1.0",
-    docs_url="/docs" if settings.app_env == "development" else None,
-    redoc_url="/redoc" if settings.app_env == "development" else None,
-    openapi_url="/openapi.json" if settings.app_env == "development" else None,
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-# --- Security Headers Middleware ---
-@app.middleware("http")
-async def add_security_headers(request: Request, call_next):  # noqa: ANN001
-    response: Response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-    )
-    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    if settings.app_env != "development":
-        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
-    return response
-
-# --- CORS ---
+# Set all CORS enabled origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
+    allow_origins=[o.strip() for o in settings.CORS_ORIGINS.split(",")],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# --- Trusted Host (production only) ---
-if settings.app_env != "development":
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
+# 에러 응답 형식 통일 (PB-72 확정 정책: error_code + message)
+app.add_exception_handler(AppError, app_error_handler)
+app.add_exception_handler(RequestValidationError, validation_error_handler)
 
-app.include_router(health.router)
+if health:
+    app.include_router(health.router)
 app.include_router(auth.router)
-
+app.include_router(workspaces.router)
+app.include_router(prompts.router)
+app.include_router(parts.router, prefix="/api/v1")
 
 @app.get("/")
-async def root() -> dict[str, str]:
-    return {"service": "prombutter-backend"}
+async def root():
+    return {
+        "success": True,
+        "data": {
+            "message": "Welcome to PromptOps API",
+            "service": "prombutter-backend"
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+@app.get("/health")
+async def health_check():
+    return {
+        "success": True,
+        "data": {"status": "healthy"},
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }

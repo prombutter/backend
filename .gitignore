@@ -1,4 +1,4 @@
-﻿# --- Project assets (kept locally, not committed) ---
+# --- Project assets (kept locally, not committed) ---
 기획서.md
 AGENTS.md
 *.damx
@@ -11,7 +11,7 @@ AGENTS.md
 01_planning/
 02_func/
 
-# 로컬 시크릿·서비스 계정 (GCP SA 등 — .env.example 경로 secrets/)
+# 로컬 시크릿·서비스 계정
 secrets/
 !secrets/.gitkeep
 
@@ -20,6 +20,10 @@ secrets/
 .vscode/
 .claude/
 *.iml
+
+# --- AI agents / skills ---
+.agents/
+skills-lock.json
 
 # --- Python ---
 __pycache__/
@@ -39,36 +43,7 @@ env/
 !.env.template
 *.env
 
-# --- Build / deploy ---
-dist/
-build/
-out/
-*.log
-_*.log
-
-# --- OS ---
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# === ContextBuilder 표준 .gitignore (SSOT: Security/적용/git_민감파일관리.md v1.3.1) ===
-# ⚠ 병합만 하고 교체하지 않는다 — 위 프로젝트 고유 패턴 보존
-
-# ContextBuilder 민감 파일
-CLAUDE.md
-CLAUDE.local.md
-AGENTS.md
-AGENTS.local.md
-ARCHITECTURE.md
-.claude/
-
-# 환경 변수·시크릿
-.env
-.env.*
-!.env.example
-!.env.template
-
-# 인증·키 (절대 git 추적 금지)
+# --- 인증·키 (절대 git 추적 금지) ---
 *.key
 *.pem
 *.p12
@@ -85,27 +60,21 @@ serviceAccountKey*.json
 google-services.json
 GoogleService-Info.plist
 
-# 패키지 레지스트리·범용 인증 설정 (auth token 이 평문으로 담긴다)
+# 패키지 레지스트리·범용 인증 설정
 .npmrc
 .yarnrc.yml
 .pypirc
 .netrc
 _netrc
 
-# ContextBuilder 중앙 Secrets 폴더 (소비 측에 만들지 않음, 만든 경우 제외)
+# ContextBuilder 중앙 Secrets / 민감 문서
 Secrets/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.local.md
+ARCHITECTURE.md
 
-# IDE
-.idea/
-.vscode/
-*.iml
-
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# 빌드 산출물
+# --- Build / deploy ---
 node_modules/
 dist/
 build/
@@ -113,24 +82,20 @@ out/
 .next/
 .turbo/
 .cache/
-__pycache__/
-*.pyc
-.venv/
-venv/
-
-# 로그·임시
 *.log
 _*.log
 .tmp/
 tmp/
 
-# 산출물 (내부 도메인 어휘·정책·보안 감사 외부 노출 차단)
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Docs ---
 Docs/
 !Docs/.gitkeep
 
-# === end ContextBuilder 표준 .gitignore ===
-
-# --- DB 마이그레이션 SQL (추적함 — 이 레포는 SQL 전달이 목적) ---
-# 위 *.sql 전역 무시를 db/migrations 하위에 한해 해제
+# --- DB 마이그레이션 SQL (추적함) ---
 !db/migrations/
 !db/migrations/*.sql

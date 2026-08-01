@@ -1,0 +1,95 @@
+name: PromButter CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: prombutter
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: prombutter_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Initialize Database
+        env:
+          PGPASSWORD: password
+        run: |
+          psql -h localhost -U prombutter -d prombutter_test -f db/migrations/0001_init.sql
+          psql -h localhost -U prombutter -d prombutter_test -f db/migrations/0002_add_unique_constraints.sql
+
+      - name: Run Pytest
+        env:
+          SECRET_KEY: test_secret_key_for_ci
+          DATABASE_URL: "postgresql+asyncpg://prombutter:password@localhost:5432/prombutter_test"
+        run: |
+          uv run pytest tests/
+
+  deploy:
+    name: Deploy to GCP
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set target environment
+        id: env-setter
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "ENV_NAME=production" >> $GITHUB_ENV
+            echo "SERVICE_NAME=prombutter-api-prod" >> $GITHUB_ENV
+          else
+            echo "ENV_NAME=staging" >> $GITHUB_ENV
+            echo "SERVICE_NAME=prombutter-api-staging" >> $GITHUB_ENV
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          echo "APP_ENV: '${ENV_NAME}'" > env.yaml
+          echo "SECRET_KEY: '${{ secrets.SECRET_KEY }}'" >> env.yaml
+          echo "DATABASE_URL: '${{ secrets.DATABASE_URL }}'" >> env.yaml
+          echo "CORS_ORIGINS: '${{ secrets.CORS_ORIGINS }}'" >> env.yaml
+          
+          gcloud run deploy $SERVICE_NAME \
+            --source . \
+            --region asia-northeast3 \
+            --allow-unauthenticated \
+            --env-vars-file=env.yaml
+          
+          echo "Deployment to $ENV_NAME triggered successfully."

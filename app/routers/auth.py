@@ -1,312 +1,244 @@
-"""Supabase OAuth + 앱 세션 엔드포인트."""
+"""
+인증 라우터 — PB-67
 
-from __future__ import annotations
+POST /auth/signup · /auth/login · /auth/refresh · /auth/logout
+GET  /auth/me
 
-from typing import Literal
-from urllib.parse import urlencode
-from uuid import UUID
+골격 단계: 라우터/스키마/시그니처만. 본문은 ②(signup) ③(login/refresh/logout/me)에서 채운다.
+위치: app/routers/auth.py
+"""
 
-import jwt
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
-from fastapi.responses import RedirectResponse
+import ipaddress
+from datetime import datetime, timedelta, timezone
 
-from app.config import settings
-from app.deps import CurrentUser, SessionDep
-from app.schemas.auth import (
-    LogoutRequest,
-    OAuthStartResponse,
-    RefreshRequest,
-    SupabaseTokenExchangeRequest,
-    TokenResponse,
-    UserPublic,
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from jose import JWTError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.cookies import REFRESH_COOKIE, clear_auth_cookies, set_auth_cookies
+from app.core.security import (
+    REFRESH,
+    _create_token,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_email,
+    hash_password,
+    hash_token,
+    verify_password,
 )
-from app.security.tokens import create_oauth_state, decode_access_token, decode_oauth_state
-from app.services import auth_service
-from app.services.supabase_auth import (
-    SupabaseAuthError,
-    build_authorize_url,
-    exchange_code_for_session,
-    extract_google_profile,
-    generate_pkce_pair,
-    get_user,
+from app.db import get_session
+from app.deps import get_current_user
+from app.models import LoginAttempt, User, UserSession, Workspace
+from app.schemas import LoginRequest, SignupRequest, UserResponse, ForgotPasswordRequest, ResetPasswordRequest
+
+_INVALID_CREDENTIALS = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
 )
+
+
+def _client_ip(request: Request) -> str | None:
+    """유효한 IP면 반환, 아니면 None (login_attempts.ip_address는 INET 타입)."""
+    host = request.client.host if request.client else None
+    if not host:
+        return None
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        return None
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-OAUTH_STATE_COOKIE = "pb_oauth_state"
-SUPPORTED_PROVIDERS = {"google"}
 
-
-def _token_response(result: auth_service.AuthSessionResult) -> TokenResponse:
-    return TokenResponse(
-        access_token=result.access_token,
-        refresh_token=result.refresh_token,
-        expires_at=result.access_token_expires_at,
-        refresh_expires_at=result.refresh_token_expires_at,
-        is_new_user=result.is_new_user,
-        user=UserPublic(
-            id=result.user_id,
-            email=result.email,
-            name=result.name,
-            role=result.role,
-            workspace_id=result.workspace_id,
-            onboarding_completed=result.onboarding_completed,
-        ),
+async def _issue_session(session: AsyncSession, user: User, response: Response) -> None:
+    """AT/RT 발급 → user_sessions에 RT 해시 저장 → 쿠키 심기. signup/login 공용."""
+    # 유저의 기본 워크스페이스 조회 (존재 시 토큰에 포함)
+    ws = await session.scalar(select(Workspace).where(Workspace.owner_id == user.id))
+    workspace_id = str(ws.id) if ws else None
+    
+    access_token = create_access_token(str(user.id), workspace_id=workspace_id)
+    refresh_token, _jti = create_refresh_token(str(user.id), workspace_id=workspace_id)
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES
     )
-
-
-def _set_oauth_cookie(response: Response, state_jwt: str) -> None:
-    response.set_cookie(
-        key=OAUTH_STATE_COOKIE,
-        value=state_jwt,
-        httponly=True,
-        secure=settings.is_production_like,
-        samesite="lax",
-        max_age=600,
-        path="/auth",
-    )
-
-
-def _clear_oauth_cookie(response: Response) -> None:
-    response.delete_cookie(key=OAUTH_STATE_COOKIE, path="/auth")
-
-
-def _frontend_redirect_allowed(url: str) -> bool:
-    allowed = settings.oauth_frontend_redirect_list
-    if not allowed:
-        return True
-    return any(url == a or url.startswith(a.rstrip("/") + "/") for a in allowed)
-
-
-@router.get("/oauth/callback")
-async def oauth_callback(
-    request: Request,
-    session: SessionDep,
-    code: str | None = Query(default=None),
-    error: str | None = Query(default=None),
-    error_description: str | None = Query(default=None),
-) -> Response:
-    """
-    Supabase → 백엔드 콜백.
-    code 교환 후 앱 세션 발급 → FE redirect_uri 해시 프래그먼트로 토큰 전달.
-    """
-    if error:
-        detail = error_description or error
-        raise HTTPException(status_code=400, detail=f"OAuth error: {detail}")
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
-
-    state_jwt = request.cookies.get(OAUTH_STATE_COOKIE)
-    if not state_jwt:
-        raise HTTPException(status_code=400, detail="Missing OAuth state cookie; restart login")
-    try:
-        state = decode_oauth_state(state_jwt)
-    except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state") from exc
-    if state.get("typ") != "oauth_state":
-        raise HTTPException(status_code=400, detail="Invalid OAuth state type")
-
-    code_verifier = str(state["cv"])
-    frontend = str(state["redirect"])
-    provider = str(state.get("provider") or "google")
-
-    try:
-        sb_session = await exchange_code_for_session(
-            auth_code=code,
-            code_verifier=code_verifier,
+    session.add(
+        UserSession(
+            user_id=user.id,
+            refresh_token_hash=hash_token(refresh_token),
+            expires_at=expires_at,
         )
-        sb_user = sb_session.get("user") or await get_user(sb_session["access_token"])
-        profile = extract_google_profile(sb_user)
-        result = await auth_service.upsert_google_user_and_session(
-            session,
-            email=profile["email"],
-            name=profile["name"],
-            provider_user_id=profile["provider_user_id"],
-            provider_access_token=sb_session.get("provider_token") or sb_session.get("access_token"),
-            provider_refresh_token=sb_session.get("provider_refresh_token")
-            or sb_session.get("refresh_token"),
-            device_info=request.headers.get("user-agent"),
-        )
-    except SupabaseAuthError as exc:
-        raise HTTPException(
-            status_code=exc.status_code or 502,
-            detail={"message": str(exc), "supabase": exc.detail},
-        ) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"Failed to complete OAuth login: {exc}") from exc
-
-    params = urlencode(
-        {
-            "access_token": result.access_token,
-            "refresh_token": result.refresh_token,
-            "token_type": "bearer",
-            "is_new_user": "true" if result.is_new_user else "false",
-            "provider": provider,
-        }
     )
-    dest = f"{frontend}#{params}" if "#" not in frontend else f"{frontend}&{params}"
-    resp = RedirectResponse(url=dest, status_code=status.HTTP_302_FOUND)
-    _clear_oauth_cookie(resp)
-    return resp
+    set_auth_cookies(response, access_token, refresh_token)
 
 
-@router.get("/oauth/{provider}", response_model=OAuthStartResponse)
-async def oauth_start(
-    provider: Literal["google"],
+@router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def signup(
+    body: SignupRequest,
     response: Response,
-    redirect_uri: str | None = Query(
-        default=None,
-        description="로그인 성공 후 FE 로 돌아갈 URL (미지정 시 OAUTH_FRONTEND_REDIRECT)",
-    ),
-) -> OAuthStartResponse:
-    """Supabase Auth Google OAuth 시작 (PKCE). authorize_url + state 쿠키 설정."""
-    if provider not in SUPPORTED_PROVIDERS:
-        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
-    if not settings.supabase_configured_for_oauth:
-        raise HTTPException(
-            status_code=503,
-            detail="Supabase OAuth is not configured (SUPABASE_URL / SUPABASE_ANON_KEY).",
-        )
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    # 1. 이메일 중복 체크 (email은 citext라 대소문자 무시)
+    existing = await session.scalar(select(User).where(User.email == body.email))
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
-    frontend = (redirect_uri or settings.oauth_frontend_redirect).strip()
-    if not frontend:
-        raise HTTPException(status_code=400, detail="redirect_uri (or OAUTH_FRONTEND_REDIRECT) required")
-    if not _frontend_redirect_allowed(frontend):
-        raise HTTPException(status_code=400, detail="redirect_uri is not allowed")
+    # 2. User 생성 (name 미입력 시 이메일 앞부분으로 — 잠정, 기획 확인 중)
+    name = body.name or body.email.split("@")[0]
+    user = User(email=body.email, name=name, password_hash=hash_password(body.password))
+    session.add(user)
+    await session.flush()  # user.id 확보 (commit 전)
 
-    verifier, challenge = generate_pkce_pair()
-    state_jwt = create_oauth_state(
-        code_verifier=verifier,
-        provider=provider,
-        frontend_redirect=frontend,
-    )
-    try:
-        authorize_url = build_authorize_url(
-            provider=provider,
-            redirect_to=settings.oauth_callback_url.rstrip("/"),
-            code_challenge=challenge,
-            scopes="email profile openid",
-        )
-    except SupabaseAuthError as exc:
-        raise HTTPException(status_code=exc.status_code or 503, detail=str(exc)) from exc
+    # 3. 워크스페이스 자동 생성 (1:1 — 이미 있으면 새로 안 만듦)
+    #    이름은 "{유저 이름}의 워크스페이스" (인증 명세 1.4)
+    ws = await session.scalar(select(Workspace).where(Workspace.owner_id == user.id))
+    if ws is None:
+        session.add(Workspace(owner_id=user.id, name=f"{name}의 워크스페이스"))
 
-    _set_oauth_cookie(response, state_jwt)
-    return OAuthStartResponse(authorize_url=authorize_url, provider=provider)
+    # 4. 토큰 발급 + 세션 저장 + 쿠키
+    await _issue_session(session, user, response)
+
+    # 5. 한 번에 커밋 (1~4 중 하나라도 실패 시 전체 롤백)
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
-@router.get("/oauth/{provider}/redirect")
-async def oauth_start_redirect(
-    provider: Literal["google"],
-    redirect_uri: str | None = Query(default=None),
-) -> RedirectResponse:
-    """브라우저 전용: 곧바로 Supabase authorize 로 302."""
-    if provider not in SUPPORTED_PROVIDERS:
-        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
-    if not settings.supabase_configured_for_oauth:
-        raise HTTPException(status_code=503, detail="Supabase OAuth is not configured")
-
-    frontend = (redirect_uri or settings.oauth_frontend_redirect).strip()
-    if not frontend or not _frontend_redirect_allowed(frontend):
-        raise HTTPException(status_code=400, detail="redirect_uri is not allowed")
-
-    verifier, challenge = generate_pkce_pair()
-    state_jwt = create_oauth_state(
-        code_verifier=verifier,
-        provider=provider,
-        frontend_redirect=frontend,
-    )
-    authorize_url = build_authorize_url(
-        provider=provider,
-        redirect_to=settings.oauth_callback_url.rstrip("/"),
-        code_challenge=challenge,
-        scopes="email profile openid",
-    )
-    resp = RedirectResponse(url=authorize_url, status_code=status.HTTP_302_FOUND)
-    _set_oauth_cookie(resp, state_jwt)
-    return resp
-
-
-@router.post("/oauth/supabase", response_model=TokenResponse)
-async def exchange_supabase_token(
-    body: SupabaseTokenExchangeRequest,
+@router.post("/login", response_model=UserResponse)
+async def login(
+    body: LoginRequest,
     request: Request,
-    session: SessionDep,
-) -> TokenResponse:
-    """
-    FE 가 Supabase JS SDK 로 OAuth 완료 후 받은 access_token 을
-    PromButter 앱 세션(JWT + refresh)으로 교환.
-    """
-    if not settings.supabase_configured_for_oauth:
-        raise HTTPException(status_code=503, detail="Supabase OAuth is not configured")
-    try:
-        sb_user = await get_user(body.access_token)
-        profile = extract_google_profile(sb_user)
-        result = await auth_service.upsert_google_user_and_session(
-            session,
-            email=profile["email"],
-            name=profile["name"],
-            provider_user_id=profile["provider_user_id"],
-            provider_access_token=body.provider_token or body.access_token,
-            provider_refresh_token=body.provider_refresh_token or body.refresh_token,
-            device_info=body.device_info or request.headers.get("user-agent"),
-        )
-    except SupabaseAuthError as exc:
-        raise HTTPException(
-            status_code=exc.status_code or 401,
-            detail={"message": str(exc), "supabase": exc.detail},
-        ) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"Token exchange failed: {exc}") from exc
-    return _token_response(result)
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    user = await session.scalar(select(User).where(User.email == body.email))
+    ip = _client_ip(request)
+    email_hash = hash_email(body.email)
+
+    # 유저 없음 OR 비번 불일치 → 동일한 401 (계정 존재 여부 노출 방지)
+    if user is None or not user.password_hash or not verify_password(body.password, user.password_hash):
+        session.add(LoginAttempt(ip_address=ip, success=False, email_hash=email_hash))
+        if user is not None:
+            user.failed_login_count += 1
+            user.last_failed_login_at = datetime.now(timezone.utc)
+        await session.commit()
+        raise _INVALID_CREDENTIALS
+
+    # 성공
+    session.add(LoginAttempt(ip_address=ip, success=True, email_hash=email_hash))
+    user.failed_login_count = 0
+    await _issue_session(session, user, response)
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh(body: RefreshRequest, request: Request, session: SessionDep) -> TokenResponse:
+@router.post("/refresh")
+async def refresh(
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    token = request.cookies.get(REFRESH_COOKIE)
+    if not token:
+        raise _INVALID_CREDENTIALS
     try:
-        result = await auth_service.refresh_session(
-            session,
-            raw_refresh_token=body.refresh_token,
-            device_info=body.device_info or request.headers.get("user-agent"),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-    return _token_response(result)
+        payload = decode_token(token)
+    except JWTError:
+        raise _INVALID_CREDENTIALS
+    if payload.get("type") != REFRESH:
+        raise _INVALID_CREDENTIALS
+
+    # 해당 refresh 세션 찾기 (해시로 조회)
+    old = await session.scalar(
+        select(UserSession).where(UserSession.refresh_token_hash == hash_token(token))
+    )
+    now = datetime.now(timezone.utc)
+    # 세션 없음 / 이미 폐기됨 / 만료 → 거부 (재사용 공격 방어)
+    if old is None or old.revoked_at is not None or old.expires_at <= now:
+        raise _INVALID_CREDENTIALS
+
+    # 회전: 헌 세션 폐기 → 새 토큰/세션 발급
+    old.revoked_at = now
+    user = await session.get(User, old.user_id)
+    if user is None:
+        raise _INVALID_CREDENTIALS
+    await _issue_session(session, user, response)
+    await session.commit()
+    return {"detail": "refreshed"}
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     request: Request,
-    session: SessionDep,
-    body: LogoutRequest | None = None,
-) -> Response:
-    """세션 폐기. Authorization Bearer 및/또는 body.refresh_token."""
-    session_id: UUID | None = None
-    auth = request.headers.get("authorization") or ""
-    if auth.lower().startswith("bearer "):
-        try:
-            payload = decode_access_token(auth.split(" ", 1)[1])
-            session_id = UUID(str(payload["sid"]))
-        except Exception:  # noqa: BLE001
-            session_id = None
-
-    raw_refresh = body.refresh_token if body else None
-    if session_id is None and not raw_refresh:
-        raise HTTPException(status_code=400, detail="Bearer token or refresh_token required")
-    await auth_service.revoke_session(
-        session,
-        session_id=session_id,
-        raw_refresh_token=raw_refresh,
-    )
-    return Response(status_code=204)
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    token = request.cookies.get(REFRESH_COOKIE)
+    if token:
+        sess = await session.scalar(
+            select(UserSession).where(UserSession.refresh_token_hash == hash_token(token))
+        )
+        if sess is not None and sess.revoked_at is None:
+            sess.revoked_at = datetime.now(timezone.utc)
+            await session.commit()
+    clear_auth_cookies(response)
 
 
-@router.get("/me", response_model=UserPublic)
-async def me(user: CurrentUser) -> UserPublic:
-    return UserPublic(
-        id=user["id"],
-        email=user["email"],
-        name=user["name"],
-        role=user["role"],
-        workspace_id=user.get("workspace_id"),
-        onboarding_completed=bool(user.get("onboarding_completed")),
-    )
+@router.get("/me", response_model=UserResponse)
+async def me(user: User = Depends(get_current_user)) -> User:
+    return user
+
+import logging
+logger = logging.getLogger(__name__)
+
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    user = await session.scalar(select(User).where(User.email == body.email))
+    if not user:
+        return {"detail": "If your email is registered, you will receive a password reset link."}
+        
+    # 임시 토큰 발급 (10분 만료)
+    reset_token = _create_token(str(user.id), "reset_password", 10)
+    
+    # 콘솔에 출력 (이메일 발송 대체)
+    logger.info(f"Password reset requested for {user.email}. Token: {reset_token}")
+    print(f"=====================================")
+    print(f"Password Reset Token for {user.email}")
+    print(f"Token: {reset_token}")
+    print(f"=====================================")
+    
+    return {"detail": "If your email is registered, you will receive a password reset link."}
+
+
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+async def reset_password(
+    body: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    try:
+        payload = decode_token(body.token)
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        
+    if payload.get("type") != "reset_password":
+        raise HTTPException(status_code=400, detail="Invalid token type")
+        
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid token payload")
+        
+    import uuid
+    user = await session.get(User, uuid.UUID(user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    user.password_hash = hash_password(body.new_password)
+    await session.commit()
+    
+    return {"detail": "Password has been successfully reset."}

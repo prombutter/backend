@@ -2,16 +2,22 @@ from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.config import settings
+from sqlalchemy.pool import StaticPool
+from app.core.config import settings
+
+connect_args = {}
+engine_kwargs = {}
+if "sqlite" not in settings.DATABASE_URL:
+    connect_args["statement_cache_size"] = 0
+elif ":memory:" in settings.DATABASE_URL:
+    engine_kwargs["poolclass"] = StaticPool
 
 engine = create_async_engine(
-    settings.database_url,
+    settings.DATABASE_URL,
     pool_pre_ping=True,
     future=True,
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
-    pool_timeout=settings.db_pool_timeout,
-    pool_recycle=1800,
+    connect_args=connect_args,
+    **engine_kwargs,
 )
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 

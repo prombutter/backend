@@ -1,0 +1,462 @@
+"""
+프롬프트 라우터 — PB-72
+
+Base: /workspaces/{workspace_id}/prompts  (경로 workspace_id는 소유 검증)
+  POST   ""                 생성
+  GET    ""                 목록(soft-delete 제외)
+  GET    "/favorites"       EXT-WIDGET용 즐겨찾기 목록  (※ /{prompt_id}보다 먼저 선언)
+  GET    "/{id}"            단건(블록 포함)
+  PATCH  "/{id}"            수정(제목·블록 통째 교체)
+  DELETE "/{id}"            소프트 삭제(deleted_at, purge_at=+30일)
+  POST   "/{id}/duplicate"  복제(제목 '(복사)', 블록 복사, ★ 미등록)
+  POST   "/{id}/favorite"   즐겨찾기 토글(★ on/off, 상한 5)
+  GET    "/{id}/variables"  블록에서 뽑은 변수명(EXT 폼용)
+  POST   "/{id}/render"     블록 이어붙여 {{변수}} 치환
+
+정책(ERR-001 v1.5 정본): 제목 중복=409 ERR-TITLE-001 / 블록10초과=422 ERR-BLOCK-001 /
+  인라인700초과=422 ERR-BODY-002 / 즐겨찾기 상한5 초과=422 ERR-FAV-002.
+  제목·즐겨찾기 상한은 DB 제약이 없어 앱 계층에서 검사(동시요청은 후속 과제).
+
+위치: app/routers/prompts.py
+"""
+
+import re
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy import column, delete, func, select, table
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import AppError
+from app.db import get_session
+from app.deps import get_path_workspace
+from app.models import BlockType, Prompt, PromptBlock, Workspace
+from app.schemas import (
+    BlockInput,
+    BlockResponse,
+    PromptCreate,
+    PromptDetailResponse,
+    PromptResponse,
+    PromptUpdate,
+    RenderRequest,
+    RenderResponse,
+    VariablesResponse,
+)
+
+# {{ 이름 }} — 양옆 공백 허용, 이름엔 중괄호/개행 불가. group(1)=변수명(공백 trim은 아래서)
+_VAR_RE = re.compile(r"\{\{\s*([^{}\n]+?)\s*\}\}")
+
+router = APIRouter(prefix="/workspaces/{workspace_id}/prompts", tags=["prompts"])
+
+PURGE_AFTER_DAYS = 30  # 소프트 삭제 후 영구 삭제까지 유예
+FAVORITE_LIMIT = 5  # 워크스페이스당 즐겨찾기(★) 상한 (PB-72 확정 정책, 초과=ERR-FAV-002/422)
+MAX_BLOCKS = 10  # 프롬프트당 블록 상한 (STRUCT-001 §5, 초과=ERR-BLOCK-001/422)
+INLINE_MAX_CHARS = 700  # 인라인 텍스트 상한 (STRUCT-001 §5.2, 초과=ERR-BODY-002/422)
+TITLE_MAX_CHARS = 100  # 제목 상한(DB varchar(100))
+
+# parts 테이블은 PB-92 소관이라 ORM 모델을 두지 않는다(향후 Part 모델과 충돌 방지).
+# PART 블록 참조 검증용으로 필요한 컬럼만 Core table로 가볍게 매핑(읽기 전용).
+_parts = table(
+    "parts",
+    column("id", PG_UUID(as_uuid=True)),
+    column("workspace_id", PG_UUID(as_uuid=True)),
+    column("deleted_at"),
+)
+
+
+async def _title_taken(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    title: str,
+    exclude_id: uuid.UUID | None = None,
+) -> bool:
+    """같은 워크스페이스에 (삭제 안 된) 동일 제목 프롬프트가 있는지. 수정 시 자기 자신은 제외."""
+    stmt = select(Prompt.id).where(
+        Prompt.workspace_id == workspace_id,
+        Prompt.title == title,
+        Prompt.deleted_at.is_(None),
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(Prompt.id != exclude_id)
+    return await session.scalar(stmt) is not None
+
+
+async def _available_copy_title(
+    session: AsyncSession, workspace_id: uuid.UUID, base: str
+) -> str:
+    """'{base} (복사)' 형태로 중복 없는 제목 생성. 제목 100자 상한 내로 자름."""
+    candidate = f"{base} (복사)"[:TITLE_MAX_CHARS]
+    n = 2
+    while await _title_taken(session, workspace_id, candidate):
+        candidate = f"{base} (복사 {n})"[:TITLE_MAX_CHARS]
+        n += 1
+    return candidate
+
+
+async def _active_favorite_count(session: AsyncSession, workspace_id: uuid.UUID) -> int:
+    """워크스페이스의 현재 즐겨찾기 개수 (삭제 안 된 것만)."""
+    return await session.scalar(
+        select(func.count())
+        .select_from(Prompt)
+        .where(
+            Prompt.workspace_id == workspace_id,
+            Prompt.favorited_at.is_not(None),
+            Prompt.deleted_at.is_(None),
+        )
+    )
+
+
+async def _get_active_prompt(
+    session: AsyncSession, workspace: Workspace, prompt_id: uuid.UUID
+) -> Prompt:
+    """워크스페이스에 속한 (삭제 안 된) 프롬프트를 찾거나 404.
+
+    다른 워크스페이스의 프롬프트는 '없음'과 동일하게 취급(존재 노출 방지).
+    """
+    prompt = await session.get(Prompt, prompt_id)
+    if prompt is None or prompt.workspace_id != workspace.id or prompt.deleted_at is not None:
+        raise AppError(
+            status.HTTP_404_NOT_FOUND, "ERR-PROMPT-NOT-FOUND", "프롬프트를 찾을 수 없어요."
+        )
+    return prompt
+
+
+async def _validate_part_refs_and_vars(
+    session: AsyncSession, workspace_id: uuid.UUID, blocks: list[BlockInput]
+) -> None:
+    """PART 블록이 참조하는 파츠가 존재하는지 확인하고, 프롬프트의 고유 변수가 20개를 초과하지 않는지 검사."""
+    part_ids = [b.part_id for b in blocks if b.block_type == BlockType.PART]
+    part_bodies = {}
+    if part_ids:
+        parts_result = await session.execute(
+            select(Part.id, Part.body).where(
+                Part.id.in_(part_ids),
+                Part.workspace_id == workspace_id,
+                Part.deleted_at.is_(None),
+            )
+        )
+        for row in parts_result.all():
+            part_bodies[row.id] = row.body
+
+        missing = [pid for pid in part_ids if pid not in part_bodies]
+        if missing:
+            raise AppError(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "ERR-BLOCK-INVALID-PART",
+                f"참조한 파츠를 찾을 수 없어요: {missing[0]}",
+            )
+
+    # 변수 상한 검사
+    text_content = ""
+    for b in blocks:
+        if b.block_type == BlockType.INLINE:
+            text_content += (b.inline_body or "") + "\n"
+        elif b.block_type == BlockType.PART and b.part_id:
+            text_content += (part_bodies.get(b.part_id) or "") + "\n"
+            
+    unique_vars = _extract_var_names(text_content)
+    if len(unique_vars) > 20:
+        raise AppError(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "ERR-VAR-003",
+            "이 프롬프트의 서로 다른 변수가 20개를 넘어요. 블록을 줄이거나 변수를 통합해 주세요.",
+        )
+
+
+def _validate_blocks(blocks: list[BlockInput]) -> None:
+    """블록 개수·인라인 길이 상한 검사 — 정본 전용 에러코드 사용.
+
+    (shape 검증은 스키마 BlockInput._check_shape가, 개수/길이는 여기서.)
+    """
+    if len(blocks) > MAX_BLOCKS:
+        raise AppError(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "ERR-BLOCK-001",
+            f"블록은 최대 {MAX_BLOCKS}개까지 추가할 수 있어요.",
+        )
+    for b in blocks:
+        if (
+            b.block_type == BlockType.INLINE
+            and b.inline_body
+            and len(b.inline_body) > INLINE_MAX_CHARS
+        ):
+            raise AppError(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "ERR-BODY-002",
+                f"텍스트는 {INLINE_MAX_CHARS}자까지 쓸 수 있어요.",
+            )
+
+
+def _build_blocks(prompt_id: uuid.UUID, blocks: list[BlockInput]) -> list[PromptBlock]:
+    """입력 블록을 PromptBlock ORM으로. 배열 위치가 곧 sort_order(0부터)."""
+    return [
+        PromptBlock(
+            prompt_id=prompt_id,
+            block_type=b.block_type,
+            inline_body=b.inline_body,
+            part_id=b.part_id,
+            sort_order=i,
+        )
+        for i, b in enumerate(blocks)
+    ]
+
+
+async def _load_blocks(session: AsyncSession, prompt_id: uuid.UUID) -> list[PromptBlock]:
+    """프롬프트의 블록을 sort_order 오름차순으로 로드."""
+    return list(
+        await session.scalars(
+            select(PromptBlock)
+            .where(PromptBlock.prompt_id == prompt_id)
+            .order_by(PromptBlock.sort_order)
+        )
+    )
+
+
+async def _detail(session: AsyncSession, prompt: Prompt) -> PromptDetailResponse:
+    """프롬프트 + 블록(sort_order 순)을 상세 응답으로 조립."""
+    blocks = await _load_blocks(session, prompt.id)
+    return PromptDetailResponse(
+        id=prompt.id,
+        workspace_id=prompt.workspace_id,
+        title=prompt.title,
+        favorited_at=prompt.favorited_at,
+        created_at=prompt.created_at,
+        updated_at=prompt.updated_at,
+        blocks=[BlockResponse.model_validate(b) for b in blocks],
+    )
+
+
+async def _assemble_text(session: AsyncSession, blocks: list[PromptBlock]) -> str:
+    """블록을 순서대로 이어붙인 원본 텍스트(줄바꿈 구분)."""
+    pieces: list[str] = []
+    for b in blocks:
+        if b.block_type == BlockType.INLINE:
+            pieces.append(b.inline_body or "")
+        else:
+            if b.part_id:
+                stmt = select(Part.body).where(Part.id == b.part_id)
+                body = await session.scalar(stmt)
+                pieces.append(body or "")
+            else:
+                pieces.append("")
+    return "\n".join(pieces)
+
+
+def _extract_var_names(text: str) -> list[str]:
+    """텍스트에서 {{변수}} 이름을 첫 등장 순·중복 제거로 추출."""
+    names = (m.strip() for m in _VAR_RE.findall(text))
+    return list(dict.fromkeys(n for n in names if n))
+
+
+def _render_text(text: str, values: dict[str, str]) -> tuple[str, list[str]]:
+    """{{name}}을 values로 치환. 값 없는 변수는 자리표시자로 남기고 missing에 모은다."""
+    missing: list[str] = []
+    seen: set[str] = set()
+
+    def repl(m: re.Match) -> str:
+        name = m.group(1).strip()
+        if name in values:
+            return str(values[name])
+        if name not in seen:
+            seen.add(name)
+            missing.append(name)
+        return m.group(0)  # 값 없음 → {{...}} 그대로
+
+    return _VAR_RE.sub(repl, text), missing
+
+
+@router.post("", response_model=PromptDetailResponse, status_code=status.HTTP_201_CREATED)
+async def create_prompt(
+    body: PromptCreate,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> PromptDetailResponse:
+    if await _title_taken(session, workspace.id, body.title):
+        raise AppError(
+            status.HTTP_409_CONFLICT,
+            "ERR-TITLE-001",
+            "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
+        )
+    _validate_blocks(body.blocks)
+    await _validate_part_refs_and_vars(session, workspace.id, body.blocks)
+    prompt = Prompt(workspace_id=workspace.id, title=body.title)
+    session.add(prompt)
+    await session.flush()  # prompt.id 확보 (블록 FK)
+    session.add_all(_build_blocks(prompt.id, body.blocks))
+    await session.commit()
+    await session.refresh(prompt)
+    return await _detail(session, prompt)
+
+
+@router.get("", response_model=list[PromptResponse])
+async def list_prompts(
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> list[Prompt]:
+    stmt = (
+        select(Prompt)
+        .where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_(None))
+        .order_by(Prompt.created_at.desc())
+    )
+    return list(await session.scalars(stmt))
+
+
+# ※ /{prompt_id}보다 먼저 선언해야 "favorites"가 UUID 경로로 잡히지 않는다.
+@router.get("/favorites", response_model=list[PromptResponse])
+async def list_favorites(
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> list[Prompt]:
+    """EXT-WIDGET용 즐겨찾기 목록(등록 최신순, soft-delete 제외)."""
+    stmt = (
+        select(Prompt)
+        .where(
+            Prompt.workspace_id == workspace.id,
+            Prompt.favorited_at.is_not(None),
+            Prompt.deleted_at.is_(None),
+        )
+        .order_by(Prompt.favorited_at.desc())
+    )
+    return list(await session.scalars(stmt))
+
+
+@router.get("/{prompt_id}", response_model=PromptDetailResponse)
+async def get_prompt(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> PromptDetailResponse:
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    return await _detail(session, prompt)
+
+
+@router.patch("/{prompt_id}", response_model=PromptDetailResponse)
+async def update_prompt(
+    prompt_id: uuid.UUID,
+    body: PromptUpdate,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> PromptDetailResponse:
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    changed = False
+
+    if body.title is not None and body.title != prompt.title:
+        if await _title_taken(session, workspace.id, body.title, exclude_id=prompt.id):
+            raise AppError(
+                status.HTTP_409_CONFLICT,
+                "ERR-TITLE-001",
+                "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
+            )
+        prompt.title = body.title
+        changed = True
+
+    if body.blocks is not None:  # 통째로 교체(생략이면 유지). []면 전부 삭제
+        _validate_blocks(body.blocks)
+        await _validate_part_refs_and_vars(session, workspace.id, body.blocks)
+        await session.execute(delete(PromptBlock).where(PromptBlock.prompt_id == prompt.id))
+        session.add_all(_build_blocks(prompt.id, body.blocks))
+        changed = True
+
+    if changed:
+        prompt.updated_at = datetime.now(timezone.utc)  # DB에 자동 갱신 트리거 없음 → 명시적
+    await session.commit()
+    await session.refresh(prompt)
+    return await _detail(session, prompt)
+
+
+@router.delete("/{prompt_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_prompt(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    prompt = await _get_active_prompt(session, workspace, prompt_id)  # 이미 삭제됨 → 404
+    now = datetime.now(timezone.utc)
+    prompt.deleted_at = now
+    prompt.purge_at = now + timedelta(days=PURGE_AFTER_DAYS)
+    await session.commit()
+
+
+@router.post(
+    "/{prompt_id}/duplicate",
+    response_model=PromptDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def duplicate_prompt(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> PromptDetailResponse:
+    """프롬프트 복제 — 제목 '{원본} (복사)'(중복 시 번호), 블록 복사, ★는 미등록."""
+    src = await _get_active_prompt(session, workspace, prompt_id)
+    src_blocks = await _load_blocks(session, src.id)
+    new_title = await _available_copy_title(session, workspace.id, src.title)
+    dup = Prompt(workspace_id=workspace.id, title=new_title)
+    session.add(dup)
+    await session.flush()  # dup.id 확보
+    session.add_all(
+        PromptBlock(
+            prompt_id=dup.id,
+            block_type=b.block_type,
+            inline_body=b.inline_body,
+            part_id=b.part_id,
+            sort_order=b.sort_order,
+        )
+        for b in src_blocks
+    )
+    await session.commit()
+    await session.refresh(dup)
+    return await _detail(session, dup)
+
+
+@router.post("/{prompt_id}/favorite", response_model=PromptResponse)
+async def toggle_favorite(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> Prompt:
+    """즐겨찾기(★) 토글 — 켜져 있으면 해제, 아니면 등록. 응답에 최종 상태(favorited_at) 반환.
+    등록 시 워크스페이스 상한(5개) 초과면 422 ERR-FAV-002로 차단(기존 등록 유지)."""
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    if prompt.favorited_at is not None:
+        prompt.favorited_at = None  # 해제
+    else:
+        if await _active_favorite_count(session, workspace.id) >= FAVORITE_LIMIT:
+            raise AppError(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "ERR-FAV-002",
+                f"프롬프트 즐겨찾기는 {FAVORITE_LIMIT}개까지 등록할 수 있어요. 일부를 해제한 뒤 다시 시도해 주세요.",
+            )
+        prompt.favorited_at = datetime.now(timezone.utc)  # 등록 (updated_at은 미변경)
+    await session.commit()
+    await session.refresh(prompt)
+    return prompt
+
+
+@router.get("/{prompt_id}/variables", response_model=VariablesResponse)
+async def get_prompt_variables(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> VariablesResponse:
+    """프롬프트 블록에서 뽑은 변수명 목록(첫 등장 순). 익스텐션 변수 입력 폼용."""
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    blocks = await _load_blocks(session, prompt.id)
+    return VariablesResponse(variables=_extract_var_names(await _assemble_text(session, blocks)))
+
+
+@router.post("/{prompt_id}/render", response_model=RenderResponse)
+async def render_prompt(
+    prompt_id: uuid.UUID,
+    body: RenderRequest,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> RenderResponse:
+    """블록을 순서대로 이어붙이고 {{변수}}를 주어진 값으로 치환.
+    값이 없는 변수는 자리표시자로 남고 missing에 담긴다(렌더는 실패하지 않음)."""
+    prompt = await _get_active_prompt(session, workspace, prompt_id)
+    blocks = await _load_blocks(session, prompt.id)
+    rendered, missing = _render_text(await _assemble_text(session, blocks), body.variables)
+    return RenderResponse(rendered=rendered, missing=missing)
