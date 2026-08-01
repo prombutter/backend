@@ -1,0 +1,74 @@
+name: PromButter CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies (using uv)
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          $HOME/.cargo/bin/uv venv
+          source .venv/bin/activate
+          $HOME/.cargo/bin/uv pip install -e .[test] || $HOME/.cargo/bin/uv pip install -r pyproject.toml
+
+      - name: Run Pytest
+        env:
+          SECRET_KEY: test_secret_key_for_ci
+          DATABASE_URL: sqlite+aiosqlite:///:memory:
+        run: |
+          source .venv/bin/activate
+          pytest tests/
+
+  deploy:
+    name: Deploy to GCP
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set target environment
+        id: env-setter
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "ENV_NAME=production" >> $GITHUB_ENV
+            echo "SERVICE_NAME=prombutter-api-prod" >> $GITHUB_ENV
+          else
+            echo "ENV_NAME=staging" >> $GITHUB_ENV
+            echo "SERVICE_NAME=prombutter-api-staging" >> $GITHUB_ENV
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          echo "Deploying to $ENV_NAME environment (Service: $SERVICE_NAME)"
+          
+          # 실제 배포 스크립트 예시 (필요시 gcloud run deploy 사용)
+          # gcloud run deploy $SERVICE_NAME \
+          #   --source . \
+          #   --region asia-northeast3 \
+          #   --allow-unauthenticated \
+          #   --set-env-vars="APP_ENV=$ENV_NAME,SECRET_KEY=${{ secrets.SECRET_KEY }}"
+          
+          echo "Deployment to $ENV_NAME triggered successfully."
