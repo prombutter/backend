@@ -31,7 +31,7 @@ from app.core.security import (
 )
 from app.db import get_session
 from app.deps import get_current_user
-from app.models import LoginAttempt, User, UserSession, Workspace
+from app.models import LoginAttempt, Token, TokenType, User, UserSession, Workspace
 from app.schemas import LoginRequest, SignupRequest, UserResponse, ForgotPasswordRequest, ResetPasswordRequest
 
 _INVALID_CREDENTIALS = HTTPException(
@@ -191,8 +191,8 @@ async def logout(
 async def me(user: User = Depends(get_current_user)) -> User:
     return user
 
-import logging
-logger = logging.getLogger(__name__)
+_RESET_PASSWORD_EXPIRE_MINUTES = 10
+
 
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
 async def forgot_password(
@@ -202,17 +202,37 @@ async def forgot_password(
     user = await session.scalar(select(User).where(User.email == body.email))
     if not user:
         return {"detail": "If your email is registered, you will receive a password reset link."}
-        
+
     # 임시 토큰 발급 (10분 만료)
-    reset_token = _create_token(str(user.id), "reset_password", 10)
-    
-    # 콘솔에 출력 (이메일 발송 대체)
-    logger.info(f"Password reset requested for {user.email}. Token: {reset_token}")
-    print(f"=====================================")
-    print(f"Password Reset Token for {user.email}")
-    print(f"Token: {reset_token}")
-    print(f"=====================================")
-    
+    reset_token = _create_token(str(user.id), "reset_password", _RESET_PASSWORD_EXPIRE_MINUTES)
+
+    # tokens 테이블에 해시로 기록 — JWT 자체는 무상태라 1회용 강제가 안 되므로,
+    # DB 행의 used_at 이 그 역할을 한다(reset-password에서 확인).
+    session.add(
+        Token(
+            user_id=user.id,
+            token_hash=hash_token(reset_token),
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(minutes=_RESET_PASSWORD_EXPIRE_MINUTES),
+            token_type=TokenType.PASSWORD_RESET,
+        )
+    )
+    await session.commit()
+
+    # 이메일 발송 미구현 — 콘솔 출력이 유일한 전달 경로다(개발 전용).
+    # 구조화 로거(logger.info)로는 절대 남기지 않는다: 로그 수집기·모니터링으로
+    # 흘러들어가 평문 리셋 토큰이 영구 보존될 위험이 print()보다 훨씬 크다.
+    #
+    # ⚠ 그 위험은 print() 에도 그대로 있다. 컨테이너에서 stdout 은 곧 로그 수집기이고,
+    # 이 토큰 하나면 해당 계정의 비밀번호를 바꿀 수 있다. 로그 열람 권한이 계정 탈취 권한이
+    # 되는 셈이라, 운영에서는 찍지 않는다(2026-08-02). 개발자가 EXPOSE_RESET_TOKEN 을 켤 때만
+    # 출력하며, 이메일 발송이 붙으면 이 블록째 사라져야 한다.
+    if settings.EXPOSE_RESET_TOKEN:
+        print("=====================================")
+        print(f"Password Reset Token for {user.email}")
+        print(f"Token: {reset_token}")
+        print("=====================================")
+
     return {"detail": "If your email is registered, you will receive a password reset link."}
 
 
@@ -225,20 +245,44 @@ async def reset_password(
         payload = decode_token(body.token)
     except JWTError:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-        
+
     if payload.get("type") != "reset_password":
         raise HTTPException(status_code=400, detail="Invalid token type")
-        
+
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid token payload")
-        
+
+    # 1회용 강제: tokens 행이 없거나, 이미 쓰였거나, 만료됐으면 거부.
+    # JWT 자체의 exp 검증(decode_token)과는 별개로 재사용 공격을 막는다.
+    now = datetime.now(timezone.utc)
+    token_row = await session.scalar(
+        select(Token).where(
+            Token.token_hash == hash_token(body.token),
+            Token.token_type == TokenType.PASSWORD_RESET,
+        )
+    )
+    if token_row is None or token_row.used_at is not None or token_row.expires_at <= now:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
     import uuid
     user = await session.get(User, uuid.UUID(user_id))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
+    token_row.used_at = now
     user.password_hash = hash_password(body.new_password)
+
+    # 비밀번호가 새로 설정됐으니, 탈취됐을 수 있는 기존 refresh 세션은 전부 폐기한다
+    # (그렇지 않으면 공격자가 이미 발급받은 refresh token으로 계속 로그인 상태를 유지할 수 있다).
+    existing_sessions = await session.scalars(
+        select(UserSession).where(
+            UserSession.user_id == user.id, UserSession.revoked_at.is_(None)
+        )
+    )
+    for s in existing_sessions:
+        s.revoked_at = now
+
     await session.commit()
-    
+
     return {"detail": "Password has been successfully reset."}
