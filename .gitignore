@@ -6,10 +6,20 @@ AGENTS.md
 *.xlsx
 *.dPrj
 
+# 내부 기획·명세·백로그 산출물 (원격 노출 금지)
+00_backlog/
+01_planning/
+02_func/
+
+# 로컬 시크릿·서비스 계정 (GCP SA 등 — .env.example 경로 secrets/)
+secrets/
+!secrets/.gitkeep
+
 # --- IDE / tooling ---
 .idea/
 .vscode/
 .claude/
+*.iml
 
 # --- Python ---
 __pycache__/
@@ -26,20 +36,23 @@ env/
 .env
 .env.*
 !.env.example
+!.env.template
+*.env
 
 # --- Build / deploy ---
 dist/
 build/
+out/
 *.log
+_*.log
 
 # --- OS ---
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# ContextBuilder 민감 파일 (자동 추가)
-CLAUDE.md
-*.env
-# === ContextBuilder 표준 .gitignore (SSOT: Security/적용/git_민감파일관리.md v1.1.0) ===
+# === ContextBuilder 표준 .gitignore (SSOT: Security/적용/git_민감파일관리.md v1.3.1) ===
+# ⚠ 병합만 하고 교체하지 않는다 — 위 프로젝트 고유 패턴 보존
 
 # ContextBuilder 민감 파일
 CLAUDE.md
@@ -67,8 +80,17 @@ secrets.json
 service-account*.json
 firebase-service-account*.json
 *-firebase-adminsdk-*.json
+firebase-adminsdk*.json
+serviceAccountKey*.json
 google-services.json
 GoogleService-Info.plist
+
+# 패키지 레지스트리·범용 인증 설정 (auth token 이 평문으로 담긴다)
+.npmrc
+.yarnrc.yml
+.pypirc
+.netrc
+_netrc
 
 # ContextBuilder 중앙 Secrets 폴더 (소비 측에 만들지 않음, 만든 경우 제외)
 Secrets/
@@ -112,13 +134,3 @@ Docs/
 # 위 *.sql 전역 무시를 db/migrations 하위에 한해 해제
 !db/migrations/
 !db/migrations/*.sql
-
-firebase-adminsdk*.json
-serviceAccountKey*.json
-
-# 패키지 레지스트리·범용 인증 설정 (auth token 평문 — SSOT git_민감파일관리.md v1.3.0)
-.npmrc
-.yarnrc.yml
-.pypirc
-.netrc
-_netrc
