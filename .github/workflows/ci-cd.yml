@@ -64,11 +64,10 @@ jobs:
         run: |
           echo "Deploying to $ENV_NAME environment (Service: $SERVICE_NAME)"
           
-          # 실제 배포 스크립트 예시 (필요시 gcloud run deploy 사용)
-          # gcloud run deploy $SERVICE_NAME \
-          #   --source . \
-          #   --region asia-northeast3 \
-          #   --allow-unauthenticated \
-          #   --set-env-vars="APP_ENV=$ENV_NAME,SECRET_KEY=${{ secrets.SECRET_KEY }}"
+          gcloud run deploy $SERVICE_NAME \
+            --source . \
+            --region asia-northeast3 \
+            --allow-unauthenticated \
+            --set-env-vars="APP_ENV=$ENV_NAME,SECRET_KEY=${{ secrets.SECRET_KEY }},DATABASE_URL=${{ secrets.DATABASE_URL }},CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}"
           
           echo "Deployment to $ENV_NAME triggered successfully."
