@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import settings
-from app.routers import health
+from app.routers import auth, health
 
 app = FastAPI(
     title="PromButter API",
@@ -43,6 +43,7 @@ if settings.app_env != "development":
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 
 app.include_router(health.router)
+app.include_router(auth.router)
 
 
 @app.get("/")
