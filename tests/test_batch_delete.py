@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.models import Prompt, Variable, PromptBlock
+from app.models.parts import Part, EntityTag
 from app.db import SessionLocal
 from app.batch.hard_delete import run_hard_delete
 

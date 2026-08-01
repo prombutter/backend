@@ -27,7 +27,7 @@ async def extract_and_save_variables(session: AsyncSession, entity_id: uuid.UUID
     ))
     
     for v in vars:
-        new_var = Variable(entity_type='part', entity_id=entity_id, name=v, has_conflict=False)
+        new_var = Variable(entity_type='PART', entity_id=entity_id, name=v, has_conflict=False)
         session.add(new_var)
         
     return len(vars)
@@ -49,7 +49,7 @@ async def handle_tags(session: AsyncSession, workspace_id: uuid.UUID, entity_id:
             session.add(tag)
             await session.flush()
         
-        link = EntityTag(entity_type='part', entity_id=entity_id, tag_id=tag.id)
+        link = EntityTag(entity_type='PART', entity_id=entity_id, tag_id=tag.id)
         session.add(link)
 
 async def _get_part_with_metadata(session: AsyncSession, part: Part) -> PartResponse:
