@@ -23,9 +23,9 @@ jobs:
       - name: Install dependencies (using uv)
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          $HOME/.cargo/bin/uv venv
+          $HOME/.local/bin/uv venv
           source .venv/bin/activate
-          $HOME/.cargo/bin/uv pip install -e .[test] || $HOME/.cargo/bin/uv pip install -r pyproject.toml
+          $HOME/.local/bin/uv pip install -e .[test] || $HOME/.local/bin/uv pip install -r pyproject.toml
 
       - name: Run Pytest
         env:
