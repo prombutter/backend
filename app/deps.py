@@ -21,9 +21,10 @@ from app.core.security import ACCESS, decode_token
 from app.db import get_session
 from app.models import User, Workspace
 
-_UNAUTHORIZED = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED,
-    detail="Not authenticated",
+_UNAUTHORIZED = AppError(
+    status.HTTP_401_UNAUTHORIZED,
+    "ERR-AUTH-001",
+    "인증이 필요합니다.",
 )
 
 

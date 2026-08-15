@@ -1,7 +1,7 @@
 import re
 import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 
@@ -81,7 +81,7 @@ async def create_part(
     # 중복 제목 검사
     existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
     if existing:
-        raise HTTPException(status_code=409, detail="ERR-PART-DUP: 이미 동일한 이름의 파츠가 있습니다.")
+        raise AppError(status.HTTP_409_CONFLICT, "ERR-PART-001", "이미 동일한 이름의 파츠가 있습니다.")
         
     new_part = Part(
         workspace_id=workspace.id,
@@ -111,7 +111,7 @@ async def restore_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found in trash")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-002", "휴지통에서 파츠를 찾을 수 없습니다.")
         
     part.deleted_at = None
     await session.commit()
@@ -127,7 +127,7 @@ async def delete_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
     part.deleted_at = datetime.now(timezone.utc)
     await session.commit()
@@ -142,7 +142,7 @@ async def permanent_delete_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found in trash")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-002", "휴지통에서 파츠를 찾을 수 없습니다.")
         
     await session.execute(EntityTag.__table__.delete().where(EntityTag.entity_id == id, EntityTag.entity_type == 'PART'))
     await session.execute(Variable.__table__.delete().where(Variable.entity_id == id, Variable.entity_type == 'PART'))
@@ -160,7 +160,7 @@ async def toggle_favorite_part(
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
     if not part.is_favorite:
         # 즐겨찾기 추가 시 50개 제한 검사
@@ -212,7 +212,7 @@ async def get_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
     return await _get_part_with_metadata(session, part)
 
@@ -226,12 +226,12 @@ async def update_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
     if part_in.title is not None and part_in.title != part.title:
         existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
         if existing:
-            raise HTTPException(status_code=409, detail="ERR-PART-DUP: 이미 동일한 이름의 파츠가 있습니다.")
+            raise AppError(status.HTTP_409_CONFLICT, "ERR-PART-001", "이미 동일한 이름의 파츠가 있습니다.")
         part.title = part_in.title
     if part_in.body is not None:
         part.body = part_in.body
@@ -258,7 +258,7 @@ async def duplicate_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
     new_part = Part(
         workspace_id=workspace.id,

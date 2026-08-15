@@ -8,7 +8,7 @@ GET /workspaces : 본인 워크스페이스 1개 조회 (가입 시 자동 생�
 위치: app/routers/workspaces.py
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,7 @@ from app.db import get_session
 from app.deps import get_current_user
 from app.models import User, Workspace
 from app.schemas import WorkspaceResponse
+from app.core.errors import AppError
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -27,5 +28,5 @@ async def get_my_workspace(
 ) -> Workspace:
     ws = await session.scalar(select(Workspace).where(Workspace.owner_id == user.id))
     if ws is None:  # 가입 시 자동 생성되므로 정상 흐름에선 발생 안 함
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-WORKSPACE-001", "워크스페이스를 찾을 수 없어요.")
     return ws

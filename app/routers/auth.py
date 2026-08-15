@@ -11,12 +11,13 @@ GET  /auth/me
 import ipaddress
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.errors import AppError
 from app.core.cookies import REFRESH_COOKIE, clear_auth_cookies, set_auth_cookies
 from app.core.security import (
     REFRESH,
@@ -34,8 +35,8 @@ from app.deps import get_current_user
 from app.models import LoginAttempt, User, UserSession, Workspace
 from app.schemas import LoginRequest, SignupRequest, UserResponse, ForgotPasswordRequest, ResetPasswordRequest
 
-_INVALID_CREDENTIALS = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+_INVALID_CREDENTIALS = AppError(
+    status.HTTP_401_UNAUTHORIZED, "ERR-AUTH-002", "잘못된 인증 정보입니다."
 )
 
 
@@ -83,7 +84,7 @@ async def signup(
     # 1. 이메일 중복 체크 (email은 citext라 대소문자 무시)
     existing = await session.scalar(select(User).where(User.email == body.email))
     if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        raise AppError(status.HTTP_409_CONFLICT, "ERR-AUTH-003", "이미 가입된 이메일입니다.")
 
     # 2. User 생성 (name 미입력 시 이메일 앞부분으로 — 잠정, 기획 확인 중)
     name = body.name or body.email.split("@")[0]
@@ -224,19 +225,19 @@ async def reset_password(
     try:
         payload = decode_token(body.token)
     except JWTError:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        raise AppError(400, "ERR-AUTH-004", "유효하지 않거나 만료된 리셋 토큰입니다.")
         
     if payload.get("type") != "reset_password":
-        raise HTTPException(status_code=400, detail="Invalid token type")
+        raise AppError(400, "ERR-AUTH-005", "잘못된 토큰 타입입니다.")
         
     user_id = payload.get("sub")
     if not user_id:
-        raise HTTPException(status_code=400, detail="Invalid token payload")
+        raise AppError(400, "ERR-AUTH-006", "잘못된 토큰 페이로드입니다.")
         
     import uuid
     user = await session.get(User, uuid.UUID(user_id))
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise AppError(404, "ERR-AUTH-007", "사용자를 찾을 수 없습니다.")
         
     user.password_hash = hash_password(body.new_password)
     await session.commit()

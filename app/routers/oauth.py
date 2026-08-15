@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
+from app.core.errors import AppError
 from fastapi.responses import RedirectResponse
 from jose import JWTError
 from pydantic import BaseModel, Field
@@ -104,17 +105,17 @@ async def oauth_callback(
     error_description: str | None = Query(default=None),
 ) -> Response:
     if error:
-        raise HTTPException(status_code=400, detail=f"OAuth error: {error_description or error}")
+        raise AppError(400, "ERR-OAUTH-001", f"OAuth error: {error_description or error}")
     if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
+        raise AppError(400, "ERR-OAUTH-002", "Missing authorization code")
 
     state_jwt = request.cookies.get(OAUTH_STATE_COOKIE)
     if not state_jwt:
-        raise HTTPException(status_code=400, detail="Missing OAuth state cookie; restart login")
+        raise AppError(400, "ERR-OAUTH-003", "Missing OAuth state cookie; restart login")
     try:
         state = decode_oauth_state(state_jwt)
     except JWTError as exc:
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state") from exc
+        raise AppError(400, "ERR-OAUTH-004", "Invalid or expired OAuth state") from exc
 
     code_verifier = str(state["cv"])
     frontend = str(state["redirect"])
@@ -139,13 +140,14 @@ async def oauth_callback(
         access_token, refresh_token = await _issue_session(session, user, response)
         await session.commit()
     except SupabaseAuthError as exc:
-        raise HTTPException(
-            status_code=exc.status_code or 502,
-            detail={"message": str(exc), "supabase": exc.detail},
+        raise AppError(
+            exc.status_code or 502,
+            "ERR-OAUTH-015",
+            {"message": str(exc), "supabase": exc.detail}
         ) from exc
     except Exception as exc:  # noqa: BLE001
         await session.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to complete OAuth login: {exc}") from exc
+        raise AppError(500, "ERR-OAUTH-005", f"Failed to complete OAuth login: {exc}") from exc
 
     params = urlencode(
         {
@@ -172,13 +174,13 @@ async def oauth_start(
     redirect_uri: str | None = Query(default=None),
 ) -> OAuthStartResponse:
     if provider not in SUPPORTED:
-        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+        raise AppError(400, "ERR-OAUTH-006", f"Unsupported provider: {provider}")
     if not settings.supabase_oauth_ready:
-        raise HTTPException(status_code=503, detail="Supabase OAuth is not configured")
+        raise AppError(503, "ERR-OAUTH-007", "Supabase OAuth is not configured")
 
     frontend = (redirect_uri or settings.OAUTH_FRONTEND_REDIRECT).strip()
     if not frontend or not _frontend_allowed(frontend):
-        raise HTTPException(status_code=400, detail="redirect_uri is not allowed")
+        raise AppError(400, "ERR-OAUTH-008", "redirect_uri is not allowed")
 
     verifier, challenge = generate_pkce_pair()
     state_jwt = create_oauth_state(
@@ -194,7 +196,7 @@ async def oauth_start(
             scopes="email profile openid",
         )
     except SupabaseAuthError as exc:
-        raise HTTPException(status_code=exc.status_code or 503, detail=str(exc)) from exc
+        raise AppError(exc.status_code or 503, "ERR-OAUTH-009", str(exc)) from exc
 
     _set_state_cookie(response, state_jwt)
     return OAuthStartResponse(authorize_url=authorize_url, provider=provider)
@@ -206,13 +208,13 @@ async def oauth_start_redirect(
     redirect_uri: str | None = Query(default=None),
 ) -> RedirectResponse:
     if provider not in SUPPORTED:
-        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+        raise AppError(400, "ERR-OAUTH-010", f"Unsupported provider: {provider}")
     if not settings.supabase_oauth_ready:
-        raise HTTPException(status_code=503, detail="Supabase OAuth is not configured")
+        raise AppError(503, "ERR-OAUTH-011", "Supabase OAuth is not configured")
 
     frontend = (redirect_uri or settings.OAUTH_FRONTEND_REDIRECT).strip()
     if not frontend or not _frontend_allowed(frontend):
-        raise HTTPException(status_code=400, detail="redirect_uri is not allowed")
+        raise AppError(400, "ERR-OAUTH-012", "redirect_uri is not allowed")
 
     verifier, challenge = generate_pkce_pair()
     state_jwt = create_oauth_state(
@@ -238,7 +240,7 @@ async def exchange_supabase_token(
     session: AsyncSession = Depends(get_session),
 ) -> OAuthTokenResponse:
     if not settings.supabase_oauth_ready:
-        raise HTTPException(status_code=503, detail="Supabase OAuth is not configured")
+        raise AppError(503, "ERR-OAUTH-013", "Supabase OAuth is not configured")
     try:
         sb_user = await get_user(body.access_token)
         profile = extract_google_profile(sb_user)
@@ -253,13 +255,14 @@ async def exchange_supabase_token(
         access_token, refresh_token = await _issue_session(session, user, response)
         await session.commit()
     except SupabaseAuthError as exc:
-        raise HTTPException(
-            status_code=exc.status_code or 401,
-            detail={"message": str(exc), "supabase": exc.detail},
+        raise AppError(
+            exc.status_code or 401,
+            "ERR-OAUTH-016",
+            {"message": str(exc), "supabase": exc.detail}
         ) from exc
     except Exception as exc:  # noqa: BLE001
         await session.rollback()
-        raise HTTPException(status_code=500, detail=f"Token exchange failed: {exc}") from exc
+        raise AppError(500, "ERR-OAUTH-014", f"Token exchange failed: {exc}") from exc
 
     return OAuthTokenResponse(
         access_token=access_token,
