@@ -21,20 +21,24 @@ async def run_hard_delete(session=None):
     cutoff = now - timedelta(days=30)
     
     if session:
-        await _execute_hard_delete(session, cutoff)
+        await _execute_hard_delete(session, cutoff, now)
     else:
         async with SessionLocal() as db_session:
-            await _execute_hard_delete(db_session, cutoff)
+            await _execute_hard_delete(db_session, cutoff, now)
 
-async def _execute_hard_delete(session, cutoff):
+async def _execute_hard_delete(session, cutoff, now):
     try:
-        # 1. 대상 파츠(Parts) 조회
-        parts_stmt = select(Part.id).where(Part.deleted_at < cutoff)
+        # 1. 대상 파츠(Parts) 조회 (purge_at이 지났거나, 예전 데이터라 purge_at이 NULL이면서 deleted_at이 30일 지난 경우)
+        parts_stmt = select(Part.id).where(
+            (Part.purge_at <= now) | ((Part.purge_at.is_(None)) & (Part.deleted_at < cutoff))
+        )
         parts_result = await session.execute(parts_stmt)
         part_ids = parts_result.scalars().all()
         
         # 2. 대상 프롬프트(Prompts) 조회
-        prompts_stmt = select(Prompt.id).where(Prompt.deleted_at < cutoff)
+        prompts_stmt = select(Prompt.id).where(
+            (Prompt.purge_at <= now) | ((Prompt.purge_at.is_(None)) & (Prompt.deleted_at < cutoff))
+        )
         prompts_result = await session.execute(prompts_stmt)
         prompt_ids = prompts_result.scalars().all()
         

@@ -1,6 +1,6 @@
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
@@ -78,6 +78,13 @@ async def create_part(
     workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
+    if part_in.title:
+        part_in.title = re.sub(r'\s+', ' ', part_in.title.strip())
+
+    active_count = await session.scalar(select(func.count()).select_from(Part).where(Part.workspace_id == workspace.id, Part.deleted_at.is_(None)))
+    if active_count >= 500:
+        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PART-004", "활성 파츠는 최대 500개까지만 생성할 수 있습니다.")
+
     # 중복 제목 검사
     existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
     if existing:
@@ -129,7 +136,13 @@ async def delete_part(id: uuid.UUID,
     if not part:
         raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
-    part.deleted_at = datetime.now(timezone.utc)
+    trashed_count = await session.scalar(select(func.count()).select_from(Part).where(Part.workspace_id == workspace.id, Part.deleted_at.is_not(None)))
+    if trashed_count >= 500:
+        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PART-005", "휴지통 파츠가 최대 500개에 도달했습니다. 영구 삭제 후 진행해주세요.")
+        
+    now = datetime.now(timezone.utc)
+    part.deleted_at = now
+    part.purge_at = now + timedelta(days=30)
     await session.commit()
     return {"success": True, "message": "Part soft-deleted successfully"}
 
@@ -228,8 +241,10 @@ async def update_part(id: uuid.UUID,
     if not part:
         raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
-    if part_in.title is not None and part_in.title != part.title:
-        existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
+    if part_in.title is not None:
+        part_in.title = re.sub(r'\s+', ' ', part_in.title.strip())
+        if part_in.title != part.title:
+            existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
         if existing:
             raise AppError(status.HTTP_409_CONFLICT, "ERR-PART-001", "이미 동일한 이름의 파츠가 있습니다.")
         part.title = part_in.title

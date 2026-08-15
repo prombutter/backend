@@ -273,6 +273,13 @@ async def create_prompt(
     workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> PromptDetailResponse:
+    if body.title:
+        body.title = re.sub(r'\s+', ' ', body.title.strip())
+
+    active_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_(None)))
+    if active_count >= 200:
+        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PROMPT-004", "프롬프트는 최대 200개까지만 생성할 수 있습니다.")
+
     if await _title_taken(session, workspace.id, body.title):
         raise AppError(
             status.HTTP_409_CONFLICT,
@@ -342,13 +349,15 @@ async def update_prompt(
     prompt = await _get_active_prompt(session, workspace, prompt_id)
     changed = False
 
-    if body.title is not None and body.title != prompt.title:
-        if await _title_taken(session, workspace.id, body.title, exclude_id=prompt.id):
-            raise AppError(
-                status.HTTP_409_CONFLICT,
-                "ERR-TITLE-001",
-                "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
-            )
+    if body.title is not None:
+        body.title = re.sub(r'\s+', ' ', body.title.strip())
+        if body.title != prompt.title:
+            if await _title_taken(session, workspace.id, body.title, exclude_id=prompt.id):
+                raise AppError(
+                    status.HTTP_409_CONFLICT,
+                    "ERR-TITLE-001",
+                    "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
+                )
         prompt.title = body.title
         changed = True
 
@@ -372,7 +381,12 @@ async def delete_prompt(
     workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    prompt = await _get_active_prompt(session, workspace, prompt_id)  # 이미 삭제됨 → 404
+    prompt = await _get_active_prompt(session, workspace, prompt_id)  # 없으면 이미 여기서 404
+    
+    trashed_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_not(None)))
+    if trashed_count >= 200:
+        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PROMPT-005", "휴지통 프롬프트가 최대 200개에 도달했습니다. 영구 삭제 후 진행해주세요.")
+        
     now = datetime.now(timezone.utc)
     prompt.deleted_at = now
     prompt.purge_at = now + timedelta(days=PURGE_AFTER_DAYS)
@@ -390,6 +404,10 @@ async def duplicate_prompt(
     session: AsyncSession = Depends(get_session),
 ) -> PromptDetailResponse:
     """프롬프트 복제 — 제목 '{원본} (복사)'(중복 시 번호), 블록 복사, ★는 미등록."""
+    active_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_(None)))
+    if active_count >= 200:
+        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PROMPT-004", "프롬프트는 최대 200개까지만 생성할 수 있습니다.")
+
     src = await _get_active_prompt(session, workspace, prompt_id)
     src_blocks = await _load_blocks(session, src.id)
     new_title = await _available_copy_title(session, workspace.id, src.title)
