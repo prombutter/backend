@@ -1,0 +1,19 @@
+﻿{
+    "schemaVersion":  1,
+    "product":  "prombutter",
+    "policy":  "platform-independent",
+    "ssot":  "D:/Project/ContextBuilder/Build/Context/Dev/운영/앱버전관리_버전체계.md#26",
+    "platforms":  {
+                      "web":  {
+                                  "semver":  "0.1.1",
+                                  "buildNumber":  1
+                              }
+                  },
+    "aliases":  {
+                    "pc":  "windows",
+                    "mac":  "macos",
+                    "aos":  "android",
+                    "ios":  "ios"
+                },
+    "notes":  "Platform-independent slots (SSOT section 2.6). PC/Mac/AOS/iOS must not share one project counter. Each platform slot bumps only on that platform build. Seed from pubspec/package.json/csproj when present; otherwise 0.1.1+1."
+}
