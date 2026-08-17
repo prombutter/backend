@@ -83,7 +83,7 @@ async def signup(
     # 1. 이메일 중복 체크 (email은 citext라 대소문자 무시)
     existing = await session.scalar(select(User).where(User.email == body.email))
     if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unable to complete registration")
 
     # 2. User 생성 (name 미입력 시 이메일 앞부분으로 — 잠정, 기획 확인 중)
     name = body.name or body.email.split("@")[0]
@@ -116,6 +116,13 @@ async def login(
     user = await session.scalar(select(User).where(User.email == body.email))
     ip = _client_ip(request)
     email_hash = hash_email(body.email)
+
+    if user is not None and user.failed_login_count >= 5:
+        last = user.last_failed_login_at
+        if last is not None and datetime.now(timezone.utc) - last < timedelta(minutes=30):
+            session.add(LoginAttempt(ip_address=ip, success=False, email_hash=email_hash))
+            await session.commit()
+            raise _INVALID_CREDENTIALS
 
     # 유저 없음 OR 비번 불일치 → 동일한 401 (계정 존재 여부 노출 방지)
     if user is None or not user.password_hash or not verify_password(body.password, user.password_hash):

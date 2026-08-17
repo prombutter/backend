@@ -68,7 +68,7 @@ def _set_state_cookie(response: Response, state_jwt: str) -> None:
         key=OAUTH_STATE_COOKIE,
         value=state_jwt,
         httponly=True,
-        secure=settings.COOKIE_SECURE,
+        secure=settings.cookie_secure_effective,
         samesite="lax",
         max_age=600,
         path="/auth",
@@ -145,13 +145,10 @@ async def oauth_callback(
         ) from exc
     except Exception as exc:  # noqa: BLE001
         await session.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to complete OAuth login: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Failed to complete OAuth login") from exc
 
     params = urlencode(
         {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer",
             "is_new_user": "true" if is_new else "false",
             "provider": provider,
         }

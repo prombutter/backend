@@ -1,7 +1,7 @@
 """
 PB-67 인증/워크스페이스 API 테스트 (DoD)
 
-해피패스(signup→login→me→refresh→logout) + 401(만료/무토큰/무효) + 409(중복)
+해피패스(signup→login→me→refresh→logout) + 401(만료/무토큰/무효) + 400(중복)
 + 워크스페이스 자동생성 + 가입 2회 시 워크스페이스 1개 유지 + RT 회전 방어.
 위치: tests/test_auth.py
 """
@@ -44,18 +44,18 @@ async def test_signup_weak_password_422(client, make_email):
     assert r.status_code == 422
 
 
-async def test_signup_duplicate_email_409(client, make_email):
+async def test_signup_duplicate_email_400(client, make_email):
     email = make_email()
     r1 = await client.post("/auth/signup", json={"email": email, "password": PW})
     assert r1.status_code == 201
     r2 = await client.post("/auth/signup", json={"email": email, "password": PW})
-    assert r2.status_code == 409
+    assert r2.status_code == 400
 
 
 async def test_signup_twice_keeps_one_workspace(client, make_email):
     email = make_email()
     await client.post("/auth/signup", json={"email": email, "password": PW})
-    await client.post("/auth/signup", json={"email": email, "password": PW})  # 409
+    await client.post("/auth/signup", json={"email": email, "password": PW})  # 400 duplicate
     async with engine.connect() as conn:
         uid = await conn.scalar(text("select id from users where email=:e"), {"e": email})
         cnt = await conn.scalar(
