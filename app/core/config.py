@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     def cookie_secure_effective(self) -> bool:
         if self.COOKIE_SECURE:
             return True
+        if not self.is_local_env:
+            return True
         return any(origin.strip().startswith("https://") for origin in self.CORS_ORIGINS.split(","))
 
     @property
