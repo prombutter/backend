@@ -4,8 +4,14 @@ on:
   push:
     branches:
       - main
+      - dev
     tags:
       - 'v*'
+  # 머지 전에 테스트를 돌려서 dev 가 깨지는 것을 막는다.
+  pull_request:
+    branches:
+      - main
+      - dev
   workflow_dispatch:
 
 jobs:
@@ -61,6 +67,11 @@ jobs:
   deploy:
     name: Deploy to GCP
     needs: test
+    # 배포 조건은 기존과 동일하게 유지한다 — main 푸시와 v* 태그일 때만.
+    # dev 푸시나 PR 에서는 test job 만 돌고 배포는 하지 않는다.
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
