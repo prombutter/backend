@@ -73,15 +73,23 @@ async def _title_taken(
     title: str,
     exclude_id: uuid.UUID | None = None,
 ) -> bool:
-    """같은 워크스페이스에 (삭제 안 된) 동일 제목 프롬프트가 있는지. 수정 시 자기 자신은 제외."""
-    stmt = select(Prompt.id).where(
+    """같은 워크스페이스 내에 동일 제목 프롬프트가 있는지 확인 (5단계 정규화 적용)."""
+    from app.core.utils import normalize_title
+    norm_input = normalize_title(title)
+    
+    stmt = select(Prompt.id, Prompt.title).where(
         Prompt.workspace_id == workspace_id,
-        Prompt.title == title,
         Prompt.deleted_at.is_(None),
     )
     if exclude_id is not None:
         stmt = stmt.where(Prompt.id != exclude_id)
-    return await session.scalar(stmt) is not None
+        
+    result = await session.execute(stmt)
+    for row in result.all():
+        if normalize_title(row.title) == norm_input:
+            return True
+            
+    return False
 
 
 async def _available_copy_title(

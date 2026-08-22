@@ -37,6 +37,8 @@ async def extract_and_save_variables(session: AsyncSession, entity_id: uuid.UUID
     return len(vars)
 
 async def handle_tags(session: AsyncSession, workspace_id: uuid.UUID, entity_id: uuid.UUID, tags: list[str]):
+    if not tags:
+        tags = []
     tags = list(set([t.lower() for t in tags]))
     
     await session.execute(EntityTag.__table__.delete().where(
@@ -49,6 +51,9 @@ async def handle_tags(session: AsyncSession, workspace_id: uuid.UUID, entity_id:
         result = await session.execute(stmt)
         tag = result.scalar_one_or_none()
         if not tag:
+            total_tags = await session.scalar(select(func.count()).select_from(Tag).where(Tag.workspace_id == workspace_id))
+            if total_tags >= 200:
+                raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-TAG-001", "태그는 워크스페이스당 최대 200개까지만 생성할 수 있어요.")
             tag = Tag(workspace_id=workspace_id, name=tag_name)
             session.add(tag)
             await session.flush()
@@ -72,6 +77,23 @@ async def _get_part_with_metadata(session: AsyncSession, part: Part) -> PartResp
     resp.tags = tags
     return resp
 
+async def _title_taken(session: AsyncSession, workspace_id: uuid.UUID, title: str, exclude_id: uuid.UUID | None = None) -> bool:
+    from app.core.utils import normalize_title
+    norm_input = normalize_title(title)
+    
+    stmt = select(Part.id, Part.title).where(
+        Part.workspace_id == workspace_id,
+        Part.deleted_at.is_(None)
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(Part.id != exclude_id)
+        
+    result = await session.execute(stmt)
+    for row in result.all():
+        if normalize_title(row.title) == norm_input:
+            return True
+    return False
+
 @router.post("", response_model=PartResponse)
 async def create_part(
     part_in: PartCreate, 
@@ -85,9 +107,8 @@ async def create_part(
     if active_count >= 500:
         raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "파츠는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.")
 
-    # 중복 제목 검사
-    existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
-    if existing:
+    # 중복 제목 검사 (정규화 기반)
+    if await _title_taken(session, workspace.id, part_in.title):
         raise AppError(status.HTTP_409_CONFLICT, "ERR-PART-001", "이미 동일한 이름의 파츠가 있습니다.")
         
     new_part = Part(
@@ -244,9 +265,8 @@ async def update_part(id: uuid.UUID,
     if part_in.title is not None:
         part_in.title = re.sub(r'\s+', ' ', part_in.title.strip())
         if part_in.title != part.title:
-            existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
-        if existing:
-            raise AppError(status.HTTP_409_CONFLICT, "ERR-PART-001", "이미 동일한 이름의 파츠가 있습니다.")
+            if await _title_taken(session, workspace.id, part_in.title, exclude_id=part.id):
+                raise AppError(status.HTTP_409_CONFLICT, "ERR-PART-001", "이미 동일한 이름의 파츠가 있습니다.")
         part.title = part_in.title
     if part_in.body is not None:
         part.body = part_in.body
