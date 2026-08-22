@@ -394,7 +394,7 @@ async def delete_prompt(
     
     trashed_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_not(None)))
     if trashed_count >= 200:
-        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "휴지통 프롬프트는 계정당 200개까지 보관할 수 있어요. 일부를 영구 삭제한 뒤 다시 시도해 주세요.")
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-003", "휴지통 프롬프트는 계정당 200개까지 보관할 수 있어요. 일부를 영구 삭제한 뒤 다시 시도해 주세요.")
         
     now = datetime.now(timezone.utc)
     prompt.deleted_at = now
