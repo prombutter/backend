@@ -5,7 +5,6 @@ on:
     branches:
       - dev
       - main
-      - dev
     tags:
       - 'v*'
   # 머지 전에 테스트를 돌려서 dev 가 깨지는 것을 막는다.
