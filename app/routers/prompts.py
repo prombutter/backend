@@ -33,6 +33,7 @@ from app.core.errors import AppError
 from app.db import get_session
 from app.deps import get_path_workspace
 from app.models import BlockType, Prompt, PromptBlock, Workspace
+from app.models.parts import Part
 from app.schemas import (
     BlockInput,
     BlockResponse,
@@ -277,8 +278,8 @@ async def create_prompt(
         body.title = re.sub(r'\s+', ' ', body.title.strip())
 
     active_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_(None)))
-    if active_count >= 200:
-        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PROMPT-004", "프롬프트는 최대 200개까지만 생성할 수 있습니다.")
+    if active_count >= 500:
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "프롬프트는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.")
 
     if await _title_taken(session, workspace.id, body.title):
         raise AppError(
@@ -385,7 +386,7 @@ async def delete_prompt(
     
     trashed_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_not(None)))
     if trashed_count >= 200:
-        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PROMPT-005", "휴지통 프롬프트가 최대 200개에 도달했습니다. 영구 삭제 후 진행해주세요.")
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "휴지통 프롬프트는 계정당 200개까지 보관할 수 있어요. 일부를 영구 삭제한 뒤 다시 시도해 주세요.")
         
     now = datetime.now(timezone.utc)
     prompt.deleted_at = now
@@ -405,8 +406,8 @@ async def duplicate_prompt(
 ) -> PromptDetailResponse:
     """프롬프트 복제 — 제목 '{원본} (복사)'(중복 시 번호), 블록 복사, ★는 미등록."""
     active_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_(None)))
-    if active_count >= 200:
-        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PROMPT-004", "프롬프트는 최대 200개까지만 생성할 수 있습니다.")
+    if active_count >= 500:
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "프롬프트는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.")
 
     src = await _get_active_prompt(session, workspace, prompt_id)
     src_blocks = await _load_blocks(session, src.id)

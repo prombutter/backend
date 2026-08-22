@@ -83,7 +83,7 @@ async def create_part(
 
     active_count = await session.scalar(select(func.count()).select_from(Part).where(Part.workspace_id == workspace.id, Part.deleted_at.is_(None)))
     if active_count >= 500:
-        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PART-004", "활성 파츠는 최대 500개까지만 생성할 수 있습니다.")
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "파츠는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.")
 
     # 중복 제목 검사
     existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
@@ -137,8 +137,8 @@ async def delete_part(id: uuid.UUID,
         raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
     trashed_count = await session.scalar(select(func.count()).select_from(Part).where(Part.workspace_id == workspace.id, Part.deleted_at.is_not(None)))
-    if trashed_count >= 500:
-        raise AppError(status.HTTP_403_FORBIDDEN, "ERR-PART-005", "휴지통 파츠가 최대 500개에 도달했습니다. 영구 삭제 후 진행해주세요.")
+    if trashed_count >= 200:
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "휴지통 파츠는 계정당 200개까지 보관할 수 있어요. 일부를 영구 삭제한 뒤 다시 시도해 주세요.")
         
     now = datetime.now(timezone.utc)
     part.deleted_at = now
