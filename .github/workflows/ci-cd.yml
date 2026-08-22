@@ -5,8 +5,14 @@ on:
     branches:
       - dev
       - main
+      - dev
     tags:
       - 'v*'
+  # 머지 전에 테스트를 돌려서 dev 가 깨지는 것을 막는다.
+  pull_request:
+    branches:
+      - main
+      - dev
   workflow_dispatch:
 
 jobs:
@@ -34,6 +40,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      # 모든 텍스트 파일이 BOM 없는 UTF-8 인지 확인한다.
+      # 실패하면 test job 이 멈추고, deploy job 은 needs: test 라 실행되지 않는다.
+      - name: Check Encoding (UTF-8)
+        run: python scripts/check_encoding.py
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -81,6 +92,11 @@ jobs:
   deploy:
     name: Deploy to GCP
     needs: test
+    # 배포 조건은 기존과 동일하게 유지한다 — main 푸시와 v* 태그일 때만.
+    # dev 푸시나 PR 에서는 test job 만 돌고 배포는 하지 않는다.
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
