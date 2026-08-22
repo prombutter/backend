@@ -18,20 +18,26 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
-class AppError(Exception):
-    """error_code를 담아 던지는 도메인 에러. app_error_handler가 JSON으로 변환한다."""
+from typing import Any
 
-    def __init__(self, status_code: int, error_code: str, message: str) -> None:
+class AppError(Exception):
+    """error_code를 담아 던지는 커스텀 에러. app_error_handler가 JSON으로 변환한다."""
+
+    def __init__(self, status_code: int, error_code: str, message: str, detail: Any = None) -> None:
         self.status_code = status_code
         self.error_code = error_code
         self.message = message
+        self.detail = detail
         super().__init__(message)
 
 
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    content = {"error_code": exc.error_code, "message": exc.message}
+    if exc.detail is not None:
+        content["detail"] = exc.detail
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error_code": exc.error_code, "message": exc.message},
+        content=content,
     )
 
 
@@ -42,8 +48,8 @@ async def validation_error_handler(
     return JSONResponse(
         status_code=422,
         content={
-            "error_code": "ERR-VALIDATION",
+            "error_code": "ERR-VAL-001",
             "message": "입력값을 확인해 주세요.",
-            "details": jsonable_encoder(exc.errors()),
+            "detail": jsonable_encoder(exc.errors()),
         },
     )

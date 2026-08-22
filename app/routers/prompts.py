@@ -73,15 +73,23 @@ async def _title_taken(
     title: str,
     exclude_id: uuid.UUID | None = None,
 ) -> bool:
-    """같은 워크스페이스에 (삭제 안 된) 동일 제목 프롬프트가 있는지. 수정 시 자기 자신은 제외."""
-    stmt = select(Prompt.id).where(
+    """같은 워크스페이스 내에 동일 제목 프롬프트가 있는지 확인 (5단계 정규화 적용)."""
+    from app.core.utils import normalize_title
+    norm_input = normalize_title(title)
+    
+    stmt = select(Prompt.id, Prompt.title).where(
         Prompt.workspace_id == workspace_id,
-        Prompt.title == title,
         Prompt.deleted_at.is_(None),
     )
     if exclude_id is not None:
         stmt = stmt.where(Prompt.id != exclude_id)
-    return await session.scalar(stmt) is not None
+        
+    result = await session.execute(stmt)
+    for row in result.all():
+        if normalize_title(row.title) == norm_input:
+            return True
+            
+    return False
 
 
 async def _available_copy_title(
@@ -119,7 +127,7 @@ async def _get_active_prompt(
     prompt = await session.get(Prompt, prompt_id)
     if prompt is None or prompt.workspace_id != workspace.id or prompt.deleted_at is not None:
         raise AppError(
-            status.HTTP_404_NOT_FOUND, "ERR-PROMPT-NOT-FOUND", "프롬프트를 찾을 수 없어요."
+            status.HTTP_404_NOT_FOUND, "ERR-PROMPT-001", "프롬프트를 찾을 수 없어요."
         )
     return prompt
 
@@ -145,8 +153,8 @@ async def _validate_part_refs_and_vars(
         if missing:
             raise AppError(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                "ERR-BLOCK-INVALID-PART",
-                f"참조한 파츠를 찾을 수 없어요: {missing[0]}",
+                "ERR-BLOCK-002",
+                f"유효하지 않은 파츠 ID가 포함되어 있습니다: {missing[0]}",
             )
 
     # 변수 상한 검사
@@ -274,11 +282,18 @@ async def create_prompt(
     workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> PromptDetailResponse:
+    if body.title:
+        body.title = re.sub(r'\s+', ' ', body.title.strip())
+
+    active_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_(None)))
+    if active_count >= 500:
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "프롬프트는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.")
+
     if await _title_taken(session, workspace.id, body.title):
         raise AppError(
             status.HTTP_409_CONFLICT,
-            "ERR-TITLE-001",
-            "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
+            "ERR-PROMPT-002",
+            "이미 동일한 이름의 프롬프트가 있습니다.",
         )
     _validate_blocks(body.blocks)
     await _validate_part_refs_and_vars(session, workspace.id, body.blocks)
@@ -343,13 +358,15 @@ async def update_prompt(
     prompt = await _get_active_prompt(session, workspace, prompt_id)
     changed = False
 
-    if body.title is not None and body.title != prompt.title:
-        if await _title_taken(session, workspace.id, body.title, exclude_id=prompt.id):
-            raise AppError(
-                status.HTTP_409_CONFLICT,
-                "ERR-TITLE-001",
-                "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
-            )
+    if body.title is not None:
+        body.title = re.sub(r'\s+', ' ', body.title.strip())
+        if body.title != prompt.title:
+            if await _title_taken(session, workspace.id, body.title, exclude_id=prompt.id):
+                raise AppError(
+                    status.HTTP_409_CONFLICT,
+                    "ERR-PROMPT-002",
+                    "이미 동일한 이름의 프롬프트가 있습니다.",
+                )
         prompt.title = body.title
         changed = True
 
@@ -373,7 +390,12 @@ async def delete_prompt(
     workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    prompt = await _get_active_prompt(session, workspace, prompt_id)  # 이미 삭제됨 → 404
+    prompt = await _get_active_prompt(session, workspace, prompt_id)  # 없으면 이미 여기서 404
+    
+    trashed_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_not(None)))
+    if trashed_count >= 200:
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "휴지통 프롬프트는 계정당 200개까지 보관할 수 있어요. 일부를 영구 삭제한 뒤 다시 시도해 주세요.")
+        
     now = datetime.now(timezone.utc)
     prompt.deleted_at = now
     prompt.purge_at = now + timedelta(days=PURGE_AFTER_DAYS)
@@ -391,6 +413,10 @@ async def duplicate_prompt(
     session: AsyncSession = Depends(get_session),
 ) -> PromptDetailResponse:
     """프롬프트 복제 — 제목 '{원본} (복사)'(중복 시 번호), 블록 복사, ★는 미등록."""
+    active_count = await session.scalar(select(func.count()).select_from(Prompt).where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_(None)))
+    if active_count >= 500:
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "프롬프트는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.")
+
     src = await _get_active_prompt(session, workspace, prompt_id)
     src_blocks = await _load_blocks(session, src.id)
     new_title = await _available_copy_title(session, workspace.id, src.title)

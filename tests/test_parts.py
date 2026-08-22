@@ -118,3 +118,22 @@ async def test_toggle_favorite(client: AsyncClient, test_workspace_id: uuid.UUID
     res = await client.post(f"/api/v1/workspaces/{ws_id}/parts/{part_id}/favorite")
     assert res.status_code == 200
     assert res.json()["is_favorite"] is False
+
+@pytest.mark.asyncio
+async def test_parts_unauthorized_401(client: AsyncClient, test_workspace_id: uuid.UUID):
+    ws_id = str(test_workspace_id)
+    # Clear cookies to simulate unauthenticated user
+    client.cookies.clear()
+    
+    # Try to access list_parts
+    res = await client.get(f"/api/v1/workspaces/{ws_id}/parts")
+    assert res.status_code == 401
+
+@pytest.mark.asyncio
+async def test_parts_forbidden_workspace_404(client: AsyncClient, test_workspace_id: uuid.UUID):
+    # Try to access a random workspace ID
+    random_ws_id = str(uuid.uuid4())
+    
+    res = await client.get(f"/api/v1/workspaces/{random_ws_id}/parts")
+    # According to get_path_workspace, this should return 404
+    assert res.status_code == 404

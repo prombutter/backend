@@ -1,7 +1,7 @@
 import re
 import uuid
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from datetime import datetime, timezone, timedelta
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 
@@ -37,6 +37,8 @@ async def extract_and_save_variables(session: AsyncSession, entity_id: uuid.UUID
     return len(vars)
 
 async def handle_tags(session: AsyncSession, workspace_id: uuid.UUID, entity_id: uuid.UUID, tags: list[str]):
+    if not tags:
+        tags = []
     tags = list(set([t.lower() for t in tags]))
     
     await session.execute(EntityTag.__table__.delete().where(
@@ -49,6 +51,9 @@ async def handle_tags(session: AsyncSession, workspace_id: uuid.UUID, entity_id:
         result = await session.execute(stmt)
         tag = result.scalar_one_or_none()
         if not tag:
+            total_tags = await session.scalar(select(func.count()).select_from(Tag).where(Tag.workspace_id == workspace_id))
+            if total_tags >= 200:
+                raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-TAG-001", "태그는 워크스페이스당 최대 200개까지만 생성할 수 있어요.")
             tag = Tag(workspace_id=workspace_id, name=tag_name)
             session.add(tag)
             await session.flush()
@@ -72,16 +77,39 @@ async def _get_part_with_metadata(session: AsyncSession, part: Part) -> PartResp
     resp.tags = tags
     return resp
 
+async def _title_taken(session: AsyncSession, workspace_id: uuid.UUID, title: str, exclude_id: uuid.UUID | None = None) -> bool:
+    from app.core.utils import normalize_title
+    norm_input = normalize_title(title)
+    
+    stmt = select(Part.id, Part.title).where(
+        Part.workspace_id == workspace_id,
+        Part.deleted_at.is_(None)
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(Part.id != exclude_id)
+        
+    result = await session.execute(stmt)
+    for row in result.all():
+        if normalize_title(row.title) == norm_input:
+            return True
+    return False
+
 @router.post("", response_model=PartResponse)
 async def create_part(
     part_in: PartCreate, 
     workspace: Workspace = Depends(get_path_workspace),
     session: AsyncSession = Depends(get_session)
 ):
-    # 중복 제목 검사
-    existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
-    if existing:
-        raise HTTPException(status_code=409, detail="ERR-PART-DUP: 이미 동일한 이름의 파츠가 있습니다.")
+    if part_in.title:
+        part_in.title = re.sub(r'\s+', ' ', part_in.title.strip())
+
+    active_count = await session.scalar(select(func.count()).select_from(Part).where(Part.workspace_id == workspace.id, Part.deleted_at.is_(None)))
+    if active_count >= 500:
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "파츠는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.")
+
+    # 중복 제목 검사 (정규화 기반)
+    if await _title_taken(session, workspace.id, part_in.title):
+        raise AppError(status.HTTP_409_CONFLICT, "ERR-PART-001", "이미 동일한 이름의 파츠가 있습니다.")
         
     new_part = Part(
         workspace_id=workspace.id,
@@ -111,7 +139,7 @@ async def restore_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found in trash")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-002", "휴지통에서 파츠를 찾을 수 없습니다.")
         
     part.deleted_at = None
     await session.commit()
@@ -127,9 +155,15 @@ async def delete_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
-    part.deleted_at = datetime.now(timezone.utc)
+    trashed_count = await session.scalar(select(func.count()).select_from(Part).where(Part.workspace_id == workspace.id, Part.deleted_at.is_not(None)))
+    if trashed_count >= 200:
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-002", "휴지통 파츠는 계정당 200개까지 보관할 수 있어요. 일부를 영구 삭제한 뒤 다시 시도해 주세요.")
+        
+    now = datetime.now(timezone.utc)
+    part.deleted_at = now
+    part.purge_at = now + timedelta(days=30)
     await session.commit()
     return {"success": True, "message": "Part soft-deleted successfully"}
 
@@ -142,7 +176,7 @@ async def permanent_delete_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found in trash")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-002", "휴지통에서 파츠를 찾을 수 없습니다.")
         
     await session.execute(EntityTag.__table__.delete().where(EntityTag.entity_id == id, EntityTag.entity_type == 'PART'))
     await session.execute(Variable.__table__.delete().where(Variable.entity_id == id, Variable.entity_type == 'PART'))
@@ -160,7 +194,7 @@ async def toggle_favorite_part(
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
     if not part.is_favorite:
         # 즐겨찾기 추가 시 50개 제한 검사
@@ -191,6 +225,9 @@ async def list_parts(
     else:
         stmt = stmt.where(Part.deleted_at.is_(None))
     
+    if is_favorite is not None:
+        stmt = stmt.where(Part.is_favorite == is_favorite)
+        
     if q:
         stmt = stmt.where(or_(Part.title.ilike(f"%{q}%"), Part.body.ilike(f"%{q}%")))
         
@@ -212,7 +249,7 @@ async def get_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
     return await _get_part_with_metadata(session, part)
 
@@ -226,12 +263,13 @@ async def update_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
-    if part_in.title is not None and part_in.title != part.title:
-        existing = await session.scalar(select(Part).where(Part.workspace_id == workspace.id, Part.title == part_in.title, Part.deleted_at.is_(None)))
-        if existing:
-            raise HTTPException(status_code=409, detail="ERR-PART-DUP: 이미 동일한 이름의 파츠가 있습니다.")
+    if part_in.title is not None:
+        part_in.title = re.sub(r'\s+', ' ', part_in.title.strip())
+        if part_in.title != part.title:
+            if await _title_taken(session, workspace.id, part_in.title, exclude_id=part.id):
+                raise AppError(status.HTTP_409_CONFLICT, "ERR-PART-001", "이미 동일한 이름의 파츠가 있습니다.")
         part.title = part_in.title
     if part_in.body is not None:
         part.body = part_in.body
@@ -258,7 +296,7 @@ async def duplicate_part(id: uuid.UUID,
     result = await session.execute(stmt)
     part = result.scalar_one_or_none()
     if not part:
-        raise HTTPException(status_code=404, detail="Part not found")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-003", "파츠를 찾을 수 없습니다.")
         
     new_part = Part(
         workspace_id=workspace.id,

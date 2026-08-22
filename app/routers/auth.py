@@ -9,18 +9,20 @@ GET  /auth/me
 """
 
 import ipaddress
+import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.errors import AppError
 from app.core.cookies import REFRESH_COOKIE, clear_auth_cookies, set_auth_cookies
 from app.core.security import (
     REFRESH,
-    _create_token,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -34,8 +36,8 @@ from app.deps import get_current_user
 from app.models import LoginAttempt, Token, TokenType, User, UserSession, Workspace
 from app.schemas import LoginRequest, SignupRequest, UserResponse, ForgotPasswordRequest, ResetPasswordRequest
 
-_INVALID_CREDENTIALS = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+_INVALID_CREDENTIALS = AppError(
+    status.HTTP_401_UNAUTHORIZED, "ERR-AUTH-002", "잘못된 인증 정보입니다."
 )
 
 
@@ -83,7 +85,9 @@ async def signup(
     # 1. 이메일 중복 체크 (email은 citext라 대소문자 무시)
     existing = await session.scalar(select(User).where(User.email == body.email))
     if existing is not None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unable to complete registration")
+        raise AppError(
+            status.HTTP_400_BAD_REQUEST, "ERR-AUTH-003", "이미 가입된 이메일입니다."
+        )
 
     # 2. User 생성 (name 미입력 시 이메일 앞부분으로 — 잠정, 기획 확인 중)
     name = body.name or body.email.split("@")[0]
@@ -198,6 +202,8 @@ async def logout(
 async def me(user: User = Depends(get_current_user)) -> User:
     return user
 
+logger = logging.getLogger(__name__)
+
 _RESET_PASSWORD_EXPIRE_MINUTES = 10
 
 
@@ -211,10 +217,9 @@ async def forgot_password(
         return {"detail": "If your email is registered, you will receive a password reset link."}
 
     # 임시 토큰 발급 (10분 만료)
-    reset_token = _create_token(str(user.id), "reset_password", _RESET_PASSWORD_EXPIRE_MINUTES)
-
-    # tokens 테이블에 해시로 기록 — JWT 자체는 무상태라 1회용 강제가 안 되므로,
-    # DB 행의 used_at 이 그 역할을 한다(reset-password에서 확인).
+    # 불투명 난수 토큰. JWT 와 달리 토큰 자체가 아무것도 주장하지 않으므로, 유효성은
+    # 전적으로 아래 tokens 행에서 나온다 — 1회용(used_at)·만료를 DB 가 단독으로 통제한다.
+    reset_token = secrets.token_urlsafe(32)
     session.add(
         Token(
             user_id=user.id,
@@ -226,14 +231,14 @@ async def forgot_password(
     )
     await session.commit()
 
-    # 이메일 발송 미구현 — 콘솔 출력이 유일한 전달 경로다(개발 전용).
-    # 구조화 로거(logger.info)로는 절대 남기지 않는다: 로그 수집기·모니터링으로
-    # 흘러들어가 평문 리셋 토큰이 영구 보존될 위험이 print()보다 훨씬 크다.
-    #
-    # ⚠ 그 위험은 print() 에도 그대로 있다. 컨테이너에서 stdout 은 곧 로그 수집기이고,
-    # 이 토큰 하나면 해당 계정의 비밀번호를 바꿀 수 있다. 로그 열람 권한이 계정 탈취 권한이
-    # 되는 셈이라, 운영에서는 찍지 않는다(2026-08-02). 개발자가 EXPOSE_RESET_TOKEN 을 켤 때만
-    # 출력하며, 이메일 발송이 붙으면 이 블록째 사라져야 한다.
+    # 이메일 발송 미구현(PB-111 대기). 구조화 로거에는 토큰을 절대 남기지 않는다 —
+    # 로그 수집기로 흘러들어가 평문 리셋 토큰이 영구 보존되고, 이 토큰 하나면 계정
+    # 비밀번호를 바꿀 수 있어 로그 열람 권한이 곧 계정 탈취 권한이 된다.
+    logger.info("Password reset requested for user_id=%s", user.id)
+
+    # 발송 경로가 없는 동안 개발자가 토큰을 얻을 유일한 수단. stdout 도 운영에서는
+    # 로그 수집기이므로 기본은 꺼 두고, 명시적으로 켤 때만 출력한다.
+    # 이메일 발송이 붙으면 이 블록째 사라져야 한다.
     if settings.EXPOSE_RESET_TOKEN:
         print("=====================================")
         print(f"Password Reset Token for {user.email}")
@@ -248,20 +253,6 @@ async def reset_password(
     body: ResetPasswordRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    try:
-        payload = decode_token(body.token)
-    except JWTError:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-
-    if payload.get("type") != "reset_password":
-        raise HTTPException(status_code=400, detail="Invalid token type")
-
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=400, detail="Invalid token payload")
-
-    # 1회용 강제: tokens 행이 없거나, 이미 쓰였거나, 만료됐으면 거부.
-    # JWT 자체의 exp 검증(decode_token)과는 별개로 재사용 공격을 막는다.
     now = datetime.now(timezone.utc)
     token_row = await session.scalar(
         select(Token).where(
@@ -269,26 +260,34 @@ async def reset_password(
             Token.token_type == TokenType.PASSWORD_RESET,
         )
     )
+    # 없음·사용됨·만료를 하나의 응답으로 묶는다. 어느 쪽인지 알려주면 공격자가
+    # 토큰의 유효 여부를 탐지하는 오라클이 된다.
     if token_row is None or token_row.used_at is not None or token_row.expires_at <= now:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        raise AppError(
+            status.HTTP_400_BAD_REQUEST,
+            "ERR-AUTH-004",
+            "유효하지 않거나 만료된 리셋 토큰입니다.",
+        )
 
-    import uuid
-    user = await session.get(User, uuid.UUID(user_id))
+    user = await session.get(User, token_row.user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise AppError(
+            status.HTTP_404_NOT_FOUND, "ERR-AUTH-007", "사용자를 찾을 수 없습니다."
+        )
 
     token_row.used_at = now
     user.password_hash = hash_password(body.new_password)
 
-    # 비밀번호가 새로 설정됐으니, 탈취됐을 수 있는 기존 refresh 세션은 전부 폐기한다
-    # (그렇지 않으면 공격자가 이미 발급받은 refresh token으로 계속 로그인 상태를 유지할 수 있다).
+    # 비밀번호가 새로 설정됐으니 기존 refresh 세션은 전부 폐기한다. 그렇지 않으면
+    # 공격자가 이미 발급받은 refresh token 으로 로그인 상태를 계속 유지할 수 있다.
+    # 행을 지우지 않고 revoked_at 을 찍는 것은 logout·refresh 와 같은 관례다(감사 추적 보존).
     existing_sessions = await session.scalars(
         select(UserSession).where(
             UserSession.user_id == user.id, UserSession.revoked_at.is_(None)
         )
     )
-    for s in existing_sessions:
-        s.revoked_at = now
+    for s_row in existing_sessions:
+        s_row.revoked_at = now
 
     await session.commit()
 
