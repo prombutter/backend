@@ -3,7 +3,9 @@ PB-72 프롬프트 API 테스트
 
 Base: /workspaces/{workspace_id}/prompts (경로 ws 소유 검증)
 커버: CRUD·블록(개수/길이/PART참조)·소유검증·복제·즐겨찾기 토글/상한·EXT목록·변수·렌더.
-에러코드는 ERR-001 v1.5 정본 기준(ERR-TITLE-001/BLOCK-001/BODY-002/FAV-002).
+에러코드는 PB-112 에서 통일한 ERR-<접두>-<번호> 규격을 따른다.
+제목 중복은 정본(ERR-001 v1.5 §5.4)의 ERR-TITLE-001 에서 ERR-PROMPT-002 로 바뀌었고,
+정의서를 새 값으로 업데이트하기로 팀에서 확정했다(2026-08-22).
 
 방식: conftest의 client + make_email 픽스처 사용(실제 로컬 DB, teardown 정리).
 위치: tests/test_prompts.py
@@ -73,7 +75,7 @@ async def test_get_missing_prompt_404(client, make_email):
     assert r.json()["error_code"] == "ERR-PROMPT-001"
 
 
-# ===== 제목 중복 / 블록 검증 (ERR-001 정본 코드) =====
+# ===== 제목 중복 / 블록 검증 =====
 async def test_duplicate_title_409(client, make_email):
     b = await _signup_ws(client, make_email)
     await client.post(b, json={"title": "같은제목"})
