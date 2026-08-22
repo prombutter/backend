@@ -70,7 +70,7 @@ async def test_get_missing_prompt_404(client, make_email):
     b = await _signup_ws(client, make_email)
     r = await client.get(f"{b}/{uuid.uuid4()}")
     assert r.status_code == 404
-    assert r.json()["error_code"] == "ERR-PROMPT-NOT-FOUND"
+    assert r.json()["error_code"] == "ERR-PROMPT-001"
 
 
 # ===== 제목 중복 / 블록 검증 (ERR-001 정본 코드) =====
@@ -79,7 +79,7 @@ async def test_duplicate_title_409(client, make_email):
     await client.post(b, json={"title": "같은제목"})
     r = await client.post(b, json={"title": "같은제목"})
     assert r.status_code == 409
-    assert r.json()["error_code"] == "ERR-TITLE-001"
+    assert r.json()["error_code"] == "ERR-PROMPT-002"
 
 
 async def test_block_count_over_10_422(client, make_email):
@@ -102,7 +102,7 @@ async def test_inline_missing_body_422(client, make_email):
     b = await _signup_ws(client, make_email)
     r = await client.post(b, json={"title": "빈블록", "blocks": [{"block_type": "INLINE"}]})
     assert r.status_code == 422
-    assert r.json()["error_code"] == "ERR-VALIDATION"
+    assert r.json()["error_code"] == "ERR-VAL-001"
 
 
 async def test_part_block_invalid_ref_422(client, make_email):
@@ -112,7 +112,7 @@ async def test_part_block_invalid_ref_422(client, make_email):
         json={"title": "파츠참조", "blocks": [{"block_type": "PART", "part_id": str(uuid.uuid4())}]},
     )
     assert r.status_code == 422
-    assert r.json()["error_code"] == "ERR-BLOCK-INVALID-PART"
+    assert r.json()["error_code"] == "ERR-BLOCK-002"
 
 
 # ===== 수정 =====
