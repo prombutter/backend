@@ -127,7 +127,7 @@ async def _get_active_prompt(
     prompt = await session.get(Prompt, prompt_id)
     if prompt is None or prompt.workspace_id != workspace.id or prompt.deleted_at is not None:
         raise AppError(
-            status.HTTP_404_NOT_FOUND, "ERR-PROMPT-NOT-FOUND", "프롬프트를 찾을 수 없어요."
+            status.HTTP_404_NOT_FOUND, "ERR-PROMPT-001", "프롬프트를 찾을 수 없어요."
         )
     return prompt
 
@@ -153,8 +153,8 @@ async def _validate_part_refs_and_vars(
         if missing:
             raise AppError(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                "ERR-BLOCK-INVALID-PART",
-                f"참조한 파츠를 찾을 수 없어요: {missing[0]}",
+                "ERR-BLOCK-002",
+                f"유효하지 않은 파츠 ID가 포함되어 있습니다: {missing[0]}",
             )
 
     # 변수 상한 검사
@@ -292,8 +292,8 @@ async def create_prompt(
     if await _title_taken(session, workspace.id, body.title):
         raise AppError(
             status.HTTP_409_CONFLICT,
-            "ERR-TITLE-001",
-            "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
+            "ERR-PROMPT-002",
+            "이미 동일한 이름의 프롬프트가 있습니다.",
         )
     _validate_blocks(body.blocks)
     await _validate_part_refs_and_vars(session, workspace.id, body.blocks)
@@ -364,8 +364,8 @@ async def update_prompt(
             if await _title_taken(session, workspace.id, body.title, exclude_id=prompt.id):
                 raise AppError(
                     status.HTTP_409_CONFLICT,
-                    "ERR-TITLE-001",
-                    "같은 이름의 프롬프트가 이미 있어요. 다른 이름을 써 주세요.",
+                    "ERR-PROMPT-002",
+                    "이미 동일한 이름의 프롬프트가 있습니다.",
                 )
         prompt.title = body.title
         changed = True
