@@ -225,6 +225,9 @@ async def list_parts(
     else:
         stmt = stmt.where(Part.deleted_at.is_(None))
     
+    if is_favorite is not None:
+        stmt = stmt.where(Part.is_favorite == is_favorite)
+        
     if q:
         stmt = stmt.where(or_(Part.title.ilike(f"%{q}%"), Part.body.ilike(f"%{q}%")))
         
