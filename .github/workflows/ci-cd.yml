@@ -34,6 +34,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      # 모든 텍스트 파일이 BOM 없는 UTF-8 인지 확인한다.
+      # 실패하면 test job 이 멈추고, deploy job 은 needs: test 라 실행되지 않는다.
+      - name: Check Encoding (UTF-8)
+        run: python scripts/check_encoding.py
+
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
