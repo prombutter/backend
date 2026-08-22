@@ -62,7 +62,7 @@ async def get_current_workspace(
     ws = await session.scalar(select(Workspace).where(Workspace.owner_id == user.id))
     if ws is None:  # 정상 흐름에선 발생 안 함(가입 시 자동 생성)
         raise AppError(
-            status.HTTP_404_NOT_FOUND, "ERR-WORKSPACE-NOT-FOUND", "워크스페이스를 찾을 수 없어요."
+            status.HTTP_404_NOT_FOUND, "ERR-WORKSPACE-001", "워크스페이스를 찾을 수 없어요."
         )
     return ws
 
@@ -77,6 +77,6 @@ async def get_path_workspace(
     ws = await session.get(Workspace, workspace_id)
     if ws is None or ws.owner_id != user.id:
         raise AppError(
-            status.HTTP_404_NOT_FOUND, "ERR-WORKSPACE-NOT-FOUND", "워크스페이스를 찾을 수 없어요."
+            status.HTTP_404_NOT_FOUND, "ERR-WORKSPACE-002", "워크스페이스를 찾을 수 없어요."
         )
     return ws

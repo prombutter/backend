@@ -65,7 +65,7 @@ async def test_foreign_workspace_404(client, make_email):
     await _signup_ws(client, make_email)
     r = await client.get(f"/workspaces/{uuid.uuid4()}/prompts")
     assert r.status_code == 404
-    assert r.json()["error_code"] == "ERR-WORKSPACE-NOT-FOUND"
+    assert r.json()["error_code"] == "ERR-WORKSPACE-002"
 
 
 async def test_get_missing_prompt_404(client, make_email):
