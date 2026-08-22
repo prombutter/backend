@@ -193,6 +193,10 @@ async def me(user: User = Depends(get_current_user)) -> User:
     return user
 
 import logging
+import secrets
+from sqlalchemy import delete
+from app.models import Token, TokenType
+
 logger = logging.getLogger(__name__)
 
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
@@ -205,14 +209,19 @@ async def forgot_password(
         return {"detail": "If your email is registered, you will receive a password reset link."}
         
     # 임시 토큰 발급 (10분 만료)
-    reset_token = _create_token(str(user.id), "reset_password", 10)
+    raw_token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
     
-    # 콘솔에 출력 (이메일 발송 대체)
-    logger.info(f"Password reset requested for {user.email}. Token: {reset_token}")
-    print(f"=====================================")
-    print(f"Password Reset Token for {user.email}")
-    print(f"Token: {reset_token}")
-    print(f"=====================================")
+    session.add(Token(
+        user_id=user.id,
+        token_hash=hash_token(raw_token),
+        expires_at=expires_at,
+        token_type=TokenType.PASSWORD_RESET
+    ))
+    await session.commit()
+    
+    # 이메일 발송 연동 전 (PB-111 대기) - 평문 로그 제거
+    logger.info(f"Password reset requested for {user.email}.")
     
     return {"detail": "If your email is registered, you will receive a password reset link."}
 
@@ -222,24 +231,35 @@ async def reset_password(
     body: ResetPasswordRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    try:
-        payload = decode_token(body.token)
-    except JWTError:
-        raise AppError(400, "ERR-AUTH-004", "유효하지 않거나 만료된 리셋 토큰입니다.")
+    token_obj = await session.scalar(
+        select(Token).where(
+            Token.token_hash == hash_token(body.token),
+            Token.token_type == TokenType.PASSWORD_RESET
+        )
+    )
+    
+    if not token_obj:
+        raise AppError(status.HTTP_400_BAD_REQUEST, "ERR-AUTH-004", "유효하지 않거나 만료된 리셋 토큰입니다.")
         
-    if payload.get("type") != "reset_password":
-        raise AppError(400, "ERR-AUTH-005", "잘못된 토큰 타입입니다.")
+    if token_obj.used_at is not None:
+        raise AppError(status.HTTP_400_BAD_REQUEST, "ERR-AUTH-004", "이미 사용된 토큰입니다.")
         
-    user_id = payload.get("sub")
-    if not user_id:
-        raise AppError(400, "ERR-AUTH-006", "잘못된 토큰 페이로드입니다.")
+    if token_obj.expires_at < datetime.now(timezone.utc):
+        raise AppError(status.HTTP_400_BAD_REQUEST, "ERR-AUTH-004", "만료된 토큰입니다.")
         
-    import uuid
-    user = await session.get(User, uuid.UUID(user_id))
+    user = await session.get(User, token_obj.user_id)
     if not user:
-        raise AppError(404, "ERR-AUTH-007", "사용자를 찾을 수 없습니다.")
+        raise AppError(status.HTTP_404_NOT_FOUND, "ERR-AUTH-007", "사용자를 찾을 수 없습니다.")
         
+    # 비밀번호 변경
     user.password_hash = hash_password(body.new_password)
+    
+    # 토큰 사용 처리
+    token_obj.used_at = datetime.now(timezone.utc)
+    
+    # 비밀번호 변경 후 기존 세션 모두 무효화
+    await session.execute(delete(UserSession).where(UserSession.user_id == user.id))
+    
     await session.commit()
     
     return {"detail": "Password has been successfully reset."}

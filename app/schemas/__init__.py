@@ -151,4 +151,15 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     token: str = Field(..., description="재설정 토큰")
-    new_password: str = Field(..., min_length=8, description="새 비밀번호")
+    new_password: str = Field(..., min_length=8, max_length=72, description="새 비밀번호")
+
+    @field_validator("new_password")
+    @classmethod
+    def _password_complexity(cls, v: str) -> str:
+        if not re.search(r"[A-Za-z]", v):
+            raise ValueError("비밀번호에 영문을 1자 이상 포함해야 합니다")
+        if not re.search(r"[0-9]", v):
+            raise ValueError("비밀번호에 숫자를 1자 이상 포함해야 합니다")
+        if not re.search(f"[{re.escape(_PW_SPECIAL)}]", v):
+            raise ValueError("비밀번호에 특수문자를 1자 이상 포함해야 합니다")
+        return v
