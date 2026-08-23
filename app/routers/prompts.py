@@ -24,7 +24,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import column, delete, func, select, table
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.db import get_session
 from app.deps import get_path_workspace
-from app.models import BlockType, Prompt, PromptBlock, Workspace
+from app.models import BlockType, Prompt, PromptBlock, Variable, Workspace
 from app.models.parts import Part
 from app.schemas import (
     BlockInput,
@@ -309,14 +309,74 @@ async def create_prompt(
 @router.get("", response_model=list[PromptResponse])
 async def list_prompts(
     workspace: Workspace = Depends(get_path_workspace),
+    is_deleted: bool = Query(False, description="True이면 휴지통(삭제된) 프롬프트 목록을 반환한다."),
     session: AsyncSession = Depends(get_session),
 ) -> list[Prompt]:
-    stmt = (
-        select(Prompt)
-        .where(Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_(None))
-        .order_by(Prompt.created_at.desc())
-    )
+    stmt = select(Prompt).where(Prompt.workspace_id == workspace.id)
+    if is_deleted:
+        stmt = stmt.where(Prompt.deleted_at.is_not(None))
+    else:
+        stmt = stmt.where(Prompt.deleted_at.is_(None))
+    stmt = stmt.order_by(Prompt.created_at.desc())
     return list(await session.scalars(stmt))
+
+
+@router.post("/{prompt_id}/restore", response_model=PromptDetailResponse)
+async def restore_prompt(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> PromptDetailResponse:
+    """휴지통 프롬프트 복원. 쿼터(500개) 초과 시 차단, 제목 중복 시 '(복원됨)' 접미사 부여."""
+    prompt = await session.get(Prompt, prompt_id)
+    if prompt is None or prompt.workspace_id != workspace.id or prompt.deleted_at is None:
+        raise AppError(
+            status.HTTP_404_NOT_FOUND, "ERR-PROMPT-001", "휴지통에서 프롬프트를 찾을 수 없어요."
+        )
+
+    # 활성 쿼터 검사
+    active_count = await session.scalar(
+        select(func.count()).select_from(Prompt).where(
+            Prompt.workspace_id == workspace.id, Prompt.deleted_at.is_(None)
+        )
+    )
+    if active_count >= 500:
+        raise AppError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "ERR-QUOTA-002",
+            "프롬프트는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.",
+        )
+
+    # 제목 중복 검사 — 중복 시 '(복원됨)' 접미사 자동 부여
+    if await _title_taken(session, workspace.id, prompt.title):
+        prompt.title = f"{prompt.title} (복원됨)"[:TITLE_MAX_CHARS]
+
+    prompt.deleted_at = None
+    prompt.purge_at = None
+    await session.commit()
+    await session.refresh(prompt)
+    return await _detail(session, prompt)
+
+
+@router.delete("/{prompt_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+async def permanent_delete_prompt(
+    prompt_id: uuid.UUID,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """휴지통 프롬프트 영구 삭제. 연관 블록·변수를 모두 제거한다."""
+    prompt = await session.get(Prompt, prompt_id)
+    if prompt is None or prompt.workspace_id != workspace.id or prompt.deleted_at is None:
+        raise AppError(
+            status.HTTP_404_NOT_FOUND, "ERR-PROMPT-001", "휴지통에서 프롬프트를 찾을 수 없어요."
+        )
+
+    await session.execute(delete(PromptBlock).where(PromptBlock.prompt_id == prompt.id))
+    await session.execute(
+        delete(Variable).where(Variable.entity_id == prompt.id, Variable.entity_type == "PROMPT")
+    )
+    await session.delete(prompt)
+    await session.commit()
 
 
 # ※ /{prompt_id}보다 먼저 선언해야 "favorites"가 UUID 경로로 잡히지 않는다.

@@ -7,7 +7,7 @@ from sqlalchemy import select, or_, func
 
 from app.db import get_session
 from app.deps import get_path_workspace
-from app.models import Workspace
+from app.models import Workspace, PromptBlock
 from app.models.parts import Part, Tag, EntityTag
 from app.models import Variable
 from app.schemas.parts import PartCreate, PartUpdate, PartResponse
@@ -15,8 +15,10 @@ from app.core.errors import AppError
 router = APIRouter(prefix="/workspaces/{workspace_id}/parts", tags=["Parts"])
 
 async def extract_and_save_variables(session: AsyncSession, entity_id: uuid.UUID, body: str) -> int:
-    vars = [v.strip() for v in list(set(re.findall(r"\{\{([\s\S]+?)\}\}", body)))]
-    vars = [v for v in vars if v]
+    # 정규식 표준: 중괄호/개행 불허, 양옆 공백 허용 (prompts.py 와 동일)
+    _VAR_RE = re.compile(r"\{\{\s*([^{}\n]+?)\s*\}\}")
+    names = [m.strip() for m in _VAR_RE.findall(body)]
+    vars = list(dict.fromkeys(n for n in names if n))  # 첫 등장 순, 중복 제거
     
     if len(vars) > 10:
         raise AppError(
@@ -94,6 +96,56 @@ async def _title_taken(session: AsyncSession, workspace_id: uuid.UUID, title: st
             return True
     return False
 
+
+async def _revalidate_prompt_vars_on_part_update(
+    session: AsyncSession, workspace_id: uuid.UUID, part_id: uuid.UUID, new_body: str
+) -> None:
+    """PB-107: 파츠 body 변경 시, 이 파츠를 참조하는 프롬프트들의 변수 합계가 20개를 초과하면 차단.
+
+    prompts.py의 _validate_part_refs_and_vars와 동일한 정규식·카운팅 로직을 사용한다.
+    """
+    from app.models import Prompt, PromptBlock, BlockType
+
+    _VAR_RE = re.compile(r"\{\{\s*([^{}\n]+?)\s*\}\}")
+
+    def _extract(text: str) -> list[str]:
+        names = [m.strip() for m in _VAR_RE.findall(text)]
+        return list(dict.fromkeys(n for n in names if n))
+
+    # 이 파츠를 참조하는 프롬프트 ID 목록
+    ref_prompt_ids = list(await session.scalars(
+        select(PromptBlock.prompt_id).where(PromptBlock.part_id == part_id).distinct()
+    ))
+    if not ref_prompt_ids:
+        return
+
+    for pid in ref_prompt_ids:
+        # 프롬프트가 삭제 상태이면 검증 스킵
+        prompt = await session.get(Prompt, pid)
+        if prompt is None or prompt.deleted_at is not None:
+            continue
+
+        blocks = list(await session.scalars(
+            select(PromptBlock).where(PromptBlock.prompt_id == pid).order_by(PromptBlock.sort_order)
+        ))
+        text_content = ""
+        for b in blocks:
+            if b.block_type == BlockType.INLINE:
+                text_content += (b.inline_body or "") + "\n"
+            elif b.block_type == BlockType.PART and b.part_id:
+                if b.part_id == part_id:
+                    text_content += new_body + "\n"  # 변경될 body 사용
+                else:
+                    other_body = await session.scalar(select(Part.body).where(Part.id == b.part_id))
+                    text_content += (other_body or "") + "\n"
+
+        if len(_extract(text_content)) > 20:
+            raise AppError(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "ERR-VAR-004",
+                f"이 파츠를 수정하면 프롬프트 '{prompt.title}'의 변수가 20개를 초과합니다. 변수를 줄인 뒤 다시 시도해 주세요.",
+            )
+
 @router.post("", response_model=PartResponse)
 async def create_part(
     part_in: PartCreate, 
@@ -140,8 +192,18 @@ async def restore_part(id: uuid.UUID,
     part = result.scalar_one_or_none()
     if not part:
         raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-002", "휴지통에서 파츠를 찾을 수 없습니다.")
-        
+
+    # 활성 쿼터 검사 (500개 상한)
+    active_count = await session.scalar(select(func.count()).select_from(Part).where(Part.workspace_id == workspace.id, Part.deleted_at.is_(None)))
+    if active_count >= 500:
+        raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-004", "파츠는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.")
+
+    # 제목 중복 검사 — 중복 시 '(복원됨)' 접미사 부여
+    if await _title_taken(session, workspace.id, part.title):
+        part.title = f"{part.title} (복원됨)"[:100]
+
     part.deleted_at = None
+    part.purge_at = None
     await session.commit()
     await session.refresh(part)
     return await _get_part_with_metadata(session, part)
@@ -177,7 +239,18 @@ async def permanent_delete_part(id: uuid.UUID,
     part = result.scalar_one_or_none()
     if not part:
         raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-002", "휴지통에서 파츠를 찾을 수 없습니다.")
-        
+
+    # FK 안전 검사 — 프롬프트가 이 파츠를 참조 중이면 삭제 차단
+    ref_count = await session.scalar(
+        select(func.count()).select_from(PromptBlock).where(PromptBlock.part_id == id)
+    )
+    if ref_count:
+        raise AppError(
+            status.HTTP_409_CONFLICT,
+            "ERR-PART-004",
+            f"이 파츠를 참조하는 프롬프트가 {ref_count}건 있어요. 참조를 먼저 제거해 주세요.",
+        )
+
     await session.execute(EntityTag.__table__.delete().where(EntityTag.entity_id == id, EntityTag.entity_type == 'PART'))
     await session.execute(Variable.__table__.delete().where(Variable.entity_id == id, Variable.entity_type == 'PART'))
     await session.delete(part)
@@ -278,6 +351,8 @@ async def update_part(id: uuid.UUID,
         
     if part_in.body is not None:
         await extract_and_save_variables(session, part.id, part_in.body)
+        # PB-107: 파츠 body 변경 시, 이 파츠를 참조하는 프롬프트의 변수 20개 상한 재검증
+        await _revalidate_prompt_vars_on_part_update(session, workspace.id, part.id, part_in.body)
         
     if part_in.tags is not None:
         await handle_tags(session, workspace.id, part.id, part_in.tags)
