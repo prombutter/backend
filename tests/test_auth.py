@@ -145,3 +145,76 @@ async def test_workspaces_returns_my_workspace(client, make_email):
     r = await client.get("/workspaces")
     assert r.status_code == 200
     assert r.json()["name"] == f"{email.split('@')[0]}의 워크스페이스"
+
+# ===== Password Reset =====
+import secrets
+from app.core.security import hash_token, hash_password
+from app.models import Token, TokenType
+
+async def test_forgot_password_unknown_email(client, make_email):
+    email = make_email()
+    r = await client.post("/auth/forgot-password", json={"email": email})
+    # Should always return 200 to prevent email enumeration
+    assert r.status_code == 200
+    assert "receive a password reset link" in r.json()["detail"]
+
+async def test_forgot_password_success(client, make_email):
+    email = make_email()
+    await client.post("/auth/signup", json={"email": email, "password": PW})
+    
+    r = await client.post("/auth/forgot-password", json={"email": email})
+    assert r.status_code == 200
+    
+    # Check that a token was created in DB
+    async with engine.connect() as conn:
+        uid = await conn.scalar(text("select id from users where email=:e"), {"e": email})
+        token_count = await conn.scalar(
+            text("select count(*) from tokens where user_id=:u and token_type='PASSWORD_RESET'"),
+            {"u": uid}
+        )
+    assert token_count == 1
+
+async def test_reset_password_success_and_reuse_400(client, make_email):
+    email = make_email()
+    await client.post("/auth/signup", json={"email": email, "password": PW})
+    
+    # 1. Insert a known token directly for testing
+    raw_token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    async with engine.begin() as conn:
+        uid = await conn.scalar(text("select id from users where email=:e"), {"e": email})
+        await conn.execute(
+            text("insert into tokens (user_id, token_hash, expires_at, token_type) values (:u, :h, :exp, :t)"),
+            {"u": uid, "h": hash_token(raw_token), "exp": now + timedelta(minutes=10), "t": "PASSWORD_RESET"}
+        )
+        
+    # 2. Reset password
+    r = await client.post("/auth/reset-password", json={"token": raw_token, "new_password": "NewPassword123!"})
+    assert r.status_code == 200
+    
+    # 3. Verify new password works
+    client.cookies.clear()
+    r_login = await client.post("/auth/login", json={"email": email, "password": "NewPassword123!"})
+    assert r_login.status_code == 200
+    
+    # 4. Try reusing the token
+    r_reuse = await client.post("/auth/reset-password", json={"token": raw_token, "new_password": "AnotherPassword!"})
+    assert r_reuse.status_code == 400
+
+async def test_reset_password_expired_400(client, make_email):
+    email = make_email()
+    await client.post("/auth/signup", json={"email": email, "password": PW})
+    
+    # 1. Insert an expired token
+    raw_token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    async with engine.begin() as conn:
+        uid = await conn.scalar(text("select id from users where email=:e"), {"e": email})
+        await conn.execute(
+            text("insert into tokens (user_id, token_hash, expires_at, token_type) values (:u, :h, :exp, :t)"),
+            {"u": uid, "h": hash_token(raw_token), "exp": now - timedelta(minutes=10), "t": "PASSWORD_RESET"}
+        )
+        
+    # 2. Try to reset
+    r = await client.post("/auth/reset-password", json={"token": raw_token, "new_password": "NewPassword123!"})
+    assert r.status_code == 400

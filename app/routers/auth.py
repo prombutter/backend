@@ -207,9 +207,12 @@ logger = logging.getLogger(__name__)
 _RESET_PASSWORD_EXPIRE_MINUTES = 10
 
 
+from fastapi import BackgroundTasks
+
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
 async def forgot_password(
     body: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     user = await session.scalar(select(User).where(User.email == body.email))
@@ -231,19 +234,11 @@ async def forgot_password(
     )
     await session.commit()
 
-    # 이메일 발송 미구현(PB-111 대기). 구조화 로거에는 토큰을 절대 남기지 않는다 —
-    # 로그 수집기로 흘러들어가 평문 리셋 토큰이 영구 보존되고, 이 토큰 하나면 계정
-    # 비밀번호를 바꿀 수 있어 로그 열람 권한이 곧 계정 탈취 권한이 된다.
+    # 이메일 발송 미구현(PB-111 대기) 부분 수정됨: PB-111 SendGrid 메일 연동
     logger.info("Password reset requested for user_id=%s", user.id)
 
-    # 발송 경로가 없는 동안 개발자가 토큰을 얻을 유일한 수단. stdout 도 운영에서는
-    # 로그 수집기이므로 기본은 꺼 두고, 명시적으로 켤 때만 출력한다.
-    # 이메일 발송이 붙으면 이 블록째 사라져야 한다.
-    if settings.EXPOSE_RESET_TOKEN:
-        print("=====================================")
-        print(f"Password Reset Token for {user.email}")
-        print(f"Token: {reset_token}")
-        print("=====================================")
+    from app.core.email import send_reset_password_email
+    background_tasks.add_task(send_reset_password_email, user.email, reset_token)
 
     return {"detail": "If your email is registered, you will receive a password reset link."}
 

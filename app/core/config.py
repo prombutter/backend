@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: str | None = None
     GCP_STORAGE_BUCKET: str | None = None
 
+    # --- Email (SendGrid) ---
+    SENDGRID_API_KEY: str = ""
+    MAIL_FROM_ADDRESS: str = "noreply@prombutter.com"
+
     # --- CORS ---
     CORS_ORIGINS: str = "http://localhost:3000"
 
