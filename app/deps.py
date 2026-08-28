@@ -10,7 +10,7 @@ get_current_workspace: 현재 유저의 워크스페이스(1:1) 반환. 프롬�
 
 import uuid
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request, status
 from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -148,8 +148,7 @@ async def test_workspaces_returns_my_workspace(client, make_email):
 
 # ===== Password Reset =====
 import secrets
-from app.core.security import hash_token, hash_password
-from app.models import Token, TokenType
+from app.core.security import hash_token
 
 async def test_forgot_password_unknown_email(client, make_email):
     email = make_email()
