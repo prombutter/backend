@@ -75,8 +75,12 @@ async def get_path_workspace(
     """URL 경로의 workspace_id가 현재 유저 소유인지 검증하고 반환.
     남의 워크스페이스/없는 id는 404로 통일(존재 노출 방지)."""
     ws = await session.get(Workspace, workspace_id)
-    if ws is None or ws.owner_id != user.id:
+    if ws is None:
         raise AppError(
             status.HTTP_404_NOT_FOUND, "ERR-WORKSPACE-002", "워크스페이스를 찾을 수 없어요."
+        )
+    if ws.owner_id != user.id:
+        raise AppError(
+            status.HTTP_403_FORBIDDEN, "ERR-AUTH-002", "해당 워크스페이스에 접근할 권한이 없습니다."
         )
     return ws

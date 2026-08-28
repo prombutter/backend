@@ -130,10 +130,35 @@ async def test_parts_unauthorized_401(client: AsyncClient, test_workspace_id: uu
     assert res.status_code == 401
 
 @pytest.mark.asyncio
-async def test_parts_forbidden_workspace_404(client: AsyncClient, test_workspace_id: uuid.UUID):
+async def test_parts_random_workspace_404(client: AsyncClient, test_workspace_id: uuid.UUID):
     # Try to access a random workspace ID
     random_ws_id = str(uuid.uuid4())
     
     res = await client.get(f"/api/v1/workspaces/{random_ws_id}/parts")
     # According to get_path_workspace, this should return 404
     assert res.status_code == 404
+
+@pytest.mark.asyncio
+async def test_parts_forbidden_workspace_403(client: AsyncClient, make_email):
+    # 1. Create first user
+    email1 = make_email()
+    r1 = await client.post("/auth/signup", json={"email": email1, "password": "password123!", "name": "User 1"})
+    
+    # Create second user
+    email2 = make_email()
+    # Create new client for second user so first client doesn't lose cookies
+    # Wait, the client is shared. We can clear cookies and login.
+    client.cookies.clear()
+    r2 = await client.post("/auth/signup", json={"email": email2, "password": "password123!", "name": "User 2"})
+    r_ws2 = await client.get("/workspaces")
+    ws_id2 = r_ws2.json()["id"]
+    
+    # 2. Login as first user again
+    client.cookies.clear()
+    await client.post("/auth/login", json={"email": email1, "password": "password123!"})
+    
+    # 3. Try to access User 2's workspace using User 1's credentials
+    res = await client.get(f"/api/v1/workspaces/{ws_id2}/parts")
+    
+    # Should be 403 Forbidden
+    assert res.status_code == 403
