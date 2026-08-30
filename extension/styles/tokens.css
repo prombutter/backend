@@ -43,7 +43,9 @@
   --radius-pill: 20px;
 
   /* ── 역할 토큰 (바가 실제로 쓰는 이름) ──────────────────────── */
-  --bar-bg: var(--neutral-50);
+  /* EXT §4.2 가 바 배경을 #eeeeeb 로 못박는다. 프론트 토큰에는 없는 값이라
+     가장 가까운 --neutral-50(#f5f4f0) 대신 스펙 값을 그대로 쓴다. */
+  --bar-bg: #eeeeeb;
   --bar-border: var(--border-card);
   --bar-fg: var(--neutral-900);
   --bar-muted: var(--neutral-700);
