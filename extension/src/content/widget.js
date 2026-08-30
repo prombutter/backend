@@ -83,6 +83,10 @@
     {
       // Gemini 는 Quill 편집기를 쓴다.
       test: (host) => host === 'gemini.google.com',
+      // 입력창을 감싼 안쪽 컨테이너는 카드보다 왼쪽으로 나가 있고 카드가
+      // overflow:hidden 이라, 그 안에 바를 넣으면 로고 쪽이 잘린다.
+      // 카드 바깥 껍데기를 앵커로 삼아 카드 위에 얹는다.
+      anchorSelectors: ['fieldset.input-area-container', 'input-area-v2', '.input-area'],
       composerSelectors: [
         'rich-textarea div.ql-editor[contenteditable="true"]',
         'div.ql-editor[contenteditable="true"]',
@@ -150,7 +154,13 @@
   }
 
   // 입력창 자체가 아니라 그것을 감싼 블록 위에 바를 놓아야 레이아웃이 덜 깨진다.
+  // 사이트가 앵커를 따로 지정하면 그쪽을 먼저 쓴다 — 입력창 바로 위가 늘 안전한
+  // 자리는 아니고, 잘라내는 껍데기 안쪽이면 바가 잘린다.
   function findAnchor(composer) {
+    for (const selector of adapter.anchorSelectors || []) {
+      const anchor = composer.closest(selector);
+      if (anchor?.parentElement) return anchor;
+    }
     return composer.closest('form') || composer.parentElement;
   }
 
