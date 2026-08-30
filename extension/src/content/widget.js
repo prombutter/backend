@@ -620,6 +620,25 @@
     return true;
   }
 
+  // 앵커를 카드 바깥으로 잡은 사이트에서는 그 컨테이너가 화면 폭을 다 쓰기도 한다.
+  // 그대로 두면 바만 입력창보다 넓어져 다른 사이트와 다르게 보인다. 입력창이 실제로
+  // 차지하는 폭에 맞춰 가운데로 모은다.
+  function alignToComposer(composer) {
+    if (!bar || !adapter.anchorSelectors) return;
+
+    // 입력창을 감싼 것 중 가장 바깥의 '보이는 카드' 폭을 기준으로 삼는다.
+    let card = composer;
+    for (let el = composer.parentElement, i = 0; el && i < 6; el = el.parentElement, i++) {
+      if (el.getBoundingClientRect().width > card.getBoundingClientRect().width) card = el;
+    }
+    const width = Math.round(card.getBoundingClientRect().width);
+    if (!width) return;
+
+    bar.host.style.width = width + 'px';
+    bar.host.style.marginLeft = 'auto';
+    bar.host.style.marginRight = 'auto';
+  }
+
   function mount() {
     if (surrendered) return;
 
@@ -644,6 +663,7 @@
         anchor.parentElement.insertBefore(bar.host, anchor);
       }
       anchorRef = anchor;
+      alignToComposer(composer);
       observeFrom(anchor.parentElement);
       return;
     }
@@ -652,6 +672,7 @@
 
     buildBar(anchor);
     anchorRef = anchor;
+    alignToComposer(composer);
     observeFrom(anchor.parentElement);
     // 사이트 구조가 바뀌어 엉뚱한 곳에 붙었을 때 눈으로 확인할 단서를 남긴다.
     console.debug('[prombutter] 프롬프트 바 부착', composer);
@@ -716,6 +737,11 @@
     observeFrom(document.body);
     mount();
   }, FALLBACK_CHECK_MS);
+
+  window.addEventListener('resize', () => {
+    const composer = currentComposer();
+    if (composer) alignToComposer(composer);
+  });
 
   observeFrom(document.body);
   mount();
