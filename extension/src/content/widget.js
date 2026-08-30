@@ -510,10 +510,13 @@
     host.id = BAR_ID;
     const shadow = host.attachShadow({ mode: 'open' });
 
-    const style = document.createElement('link');
-    style.rel = 'stylesheet';
-    style.href = chrome.runtime.getURL('styles/widget.css');
-    shadow.append(style);
+    // 토큰을 먼저, 그것을 쓰는 규칙을 나중에. 순서가 바뀌면 var() 가 빈 값이 된다.
+    for (const href of ['styles/tokens.css', 'styles/widget.css']) {
+      const style = document.createElement('link');
+      style.rel = 'stylesheet';
+      style.href = chrome.runtime.getURL(href);
+      shadow.append(style);
+    }
 
     const root = document.createElement('div');
     root.className = 'pb-bar';
@@ -521,10 +524,12 @@
     // 원래 사이트가 아니라 PromButter 가 넣은 도구임을 알린다 (EXT §4.4.3).
     root.setAttribute('aria-label', t('barLabel'));
 
+    // 워드마크는 CSS 배경으로 넣는다. 테마에 따라 남색·크림 두 벌이 갈리는데,
+    // 그 판단을 토큰에 맡기면 여기서 테마를 알 필요가 없다.
     const mark = document.createElement('span');
     mark.className = 'pb-brand';
-    mark.setAttribute('aria-hidden', 'true');
-    mark.textContent = '✳';
+    mark.setAttribute('role', 'img');
+    mark.setAttribute('aria-label', t('extName'));
 
     const chipsEl = document.createElement('div');
     chipsEl.className = 'pb-chips';

@@ -73,5 +73,8 @@
   },
   "errLocked": {
     "message": "This prompt uses a deleted part. Please restore the part or tidy up the blocks on the web, then try again."
+  },
+  "optionsBody": {
+    "message": "Nothing to configure yet. Manage your favorite prompts on the web app."
   }
 }

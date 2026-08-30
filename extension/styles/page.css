@@ -1,0 +1,104 @@
+/* 확장 페이지(팝업·옵션) 공통 스타일.
+ * 콘텐츠 스크립트와 달리 여기는 Shadow DOM 이 아니므로 토큰을 :root 에 건다.
+ * 값의 진원은 프론트엔드 styles/tokens.css 다.
+ */
+
+:root {
+  --navy-900: #1a1b2f;
+  --navy-700: #323448;
+  --navy-600: #41424e;
+  --neutral-white: #ffffff;
+  --neutral-50: #f5f4f0;
+  --neutral-100: #ece2cd;
+  --neutral-200: #dcdbd7;
+  --neutral-500: #777672;
+  --neutral-700: #444444;
+  --neutral-900: #202020;
+  --amber-400: #f4c046;
+  --tag-blue-fg: #2471b3;
+  --border-card: rgba(119, 118, 114, 0.3);
+  --border-button-secondary: rgba(153, 153, 153, 0.5);
+  --font-body:
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
+    "Malgun Gothic", sans-serif;
+  --radius-card: 12px;
+  --radius-btn: 8px;
+
+  --page-bg: var(--neutral-50);
+  --surface: var(--neutral-white);
+  --fg: var(--neutral-900);
+  --muted: var(--neutral-700);
+  --border: var(--border-card);
+  --link: var(--tag-blue-fg);
+  --focus-ring: var(--navy-900);
+  --logo: url("../assets/logo-dark.svg");
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg: var(--navy-900);
+    --surface: var(--navy-700);
+    --fg: var(--neutral-white);
+    --muted: rgba(255, 255, 255, 0.72);
+    --border: rgba(255, 255, 255, 0.16);
+    --link: #8fbdf0;
+    --focus-ring: var(--amber-400);
+    --logo: url("../assets/logo.svg");
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--page-bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.4;
+  letter-spacing: -0.28px;
+}
+
+.pb-logo {
+  width: 120px;
+  height: 18px;
+  margin-bottom: 12px;
+  background-image: var(--logo);
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.pb-card {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.32px;
+}
+
+p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+a,
+button.pb-link {
+  color: var(--link);
+  text-decoration: underline;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}

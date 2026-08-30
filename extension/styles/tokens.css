@@ -1,0 +1,94 @@
+/* Prombutter 디자인 토큰 — 확장 사본.
+ *
+ * 진원은 프론트엔드 저장소의 styles/tokens.css (Figma 변수) 다.
+ * 확장 UI 는 Shadow DOM 안에서 돌아 호스트 페이지의 어떤 스타일도 상속받지 않으므로,
+ * 웹 앱 컴포넌트를 그대로 가져올 수 없고 토큰만 옮겨 쓴다.
+ * 프론트 토큰이 바뀌면 이 파일도 함께 고쳐야 한다.
+ */
+
+:host {
+  /* ── 색 ─────────────────────────────────────────────────── */
+  --navy-900: #1a1b2f;
+  --navy-700: #323448;
+  --navy-600: #41424e;
+
+  --neutral-white: #ffffff;
+  --neutral-50: #f5f4f0;
+  --neutral-100: #ece2cd;
+  --neutral-200: #dcdbd7;
+  --neutral-400: #999999;
+  --neutral-500: #777672;
+  --neutral-700: #444444;
+  --neutral-900: #202020;
+
+  --amber-400: #f4c046;
+  --amber-700: #b7770d;
+
+  --tag-blue-fg: #2471b3;
+  --red-600: #b32424;
+
+  --border-card: rgba(119, 118, 114, 0.3);
+  --border-button-secondary: rgba(153, 153, 153, 0.5);
+
+  /* ── 타이포 ──────────────────────────────────────────────── */
+  /* Pretendard 는 프론트가 CDN 으로 불러오지만, 확장은 호스트 페이지의 CSP 에 막힐 수
+     있어 로컬 설치본만 쓰고 없으면 시스템 폰트로 내려간다. */
+  --font-body:
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
+    "Malgun Gothic", sans-serif;
+
+  /* ── 형태 ───────────────────────────────────────────────── */
+  --radius-card: 12px;
+  --radius-btn: 8px;
+  --radius-pill: 20px;
+
+  /* ── 역할 토큰 (바가 실제로 쓰는 이름) ──────────────────────── */
+  --bar-bg: var(--neutral-50);
+  --bar-border: var(--border-card);
+  --bar-fg: var(--neutral-900);
+  --bar-muted: var(--neutral-700);
+
+  --chip-bg: var(--neutral-white);
+  --chip-border: var(--border-button-secondary);
+  --chip-fg: var(--neutral-900);
+
+  --chip-locked-bg: var(--neutral-200);
+  --chip-locked-fg: var(--neutral-700);
+
+  --mark-external: var(--tag-blue-fg);
+  --mark-locked: var(--red-600);
+
+  --link-fg: var(--tag-blue-fg);
+  --focus-ring: var(--navy-900);
+
+  --logo: url("../assets/logo-dark.svg"); /* 밝은 배경용 남색 워드마크 */
+}
+
+/* 다크 테마 — 프론트에는 다크 모드가 없어 확장에서 새로 정의한다.
+   ChatGPT·Claude 의 다크 화면에서 바만 하얗게 뜨는 것을 막는다.
+   색은 새로 만들지 않고 프론트의 navy 계열을 그대로 쓴다. */
+@media (prefers-color-scheme: dark) {
+  :host {
+    --bar-bg: var(--navy-700);
+    --bar-border: rgba(255, 255, 255, 0.16);
+    --bar-fg: var(--neutral-white);
+    /* 글자에는 반투명을 쓰지 않는다. 배경과 섞인 실제 색을 알 수 없어 명도 대비를
+       확정할 수 없고, 호스트 페이지 배경이 비쳐 사이트마다 달라진다 (EXT §4.4.4). */
+    --bar-muted: #d5d7e0;
+
+    --chip-bg: var(--navy-600);
+    --chip-border: rgba(255, 255, 255, 0.22);
+    --chip-fg: var(--neutral-white);
+
+    --chip-locked-bg: #2a2b3a;
+    --chip-locked-fg: #b6b9c6;
+
+    --mark-external: #8fbdf0;
+    --mark-locked: #f08a8a;
+
+    --link-fg: #8fbdf0;
+    --focus-ring: var(--amber-400);
+
+    --logo: url("../assets/logo.svg"); /* 어두운 배경용 크림 워드마크 */
+  }
+}

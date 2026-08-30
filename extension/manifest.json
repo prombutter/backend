@@ -57,7 +57,10 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "styles/tokens.css",
         "styles/widget.css",
+        "assets/logo.svg",
+        "assets/logo-dark.svg",
         "assets/icons/*"
       ],
       "matches": [

@@ -1,6 +1,11 @@
 /* EXT-WIDGET 프롬프트 바 (EXT §4.2 레이아웃).
-   Shadow DOM 안에서만 적용되므로 호스트 페이지와 서로 영향을 주지 않는다.
-   반대로 호스트의 어떤 스타일도 상속되지 않으니 필요한 값은 전부 여기서 정한다. */
+ *
+ * 색·타이포·형태는 tokens.css 가 정의한 디자인 토큰만 쓴다. 여기에 색 값을 직접 적지
+ * 않는다 — 프론트 토큰이 바뀌면 tokens.css 한 곳만 고치면 되도록 한다.
+ *
+ * Shadow DOM 안에서만 적용되므로 호스트 페이지와 서로 영향을 주지 않는다.
+ * 반대로 호스트의 어떤 스타일도 상속되지 않으니 필요한 값은 전부 여기서 정한다.
+ */
 
 :host {
   all: initial;
@@ -15,20 +20,26 @@
   box-sizing: border-box;
   margin: 0 0 6px;
   padding: 6px 10px;
-  border: 1px solid #d9d9d4;
-  border-radius: 10px;
-  background: #eeeeeb;
-  color: #1f1f1c;
-  font-family: 'Pretendard', 'Malgun Gothic', system-ui, sans-serif;
-  font-size: 13px;
-  line-height: 1.4;
+  border: 1px solid var(--bar-border);
+  border-radius: var(--radius-card);
+  background: var(--bar-bg);
+  color: var(--bar-fg);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.3;
+  letter-spacing: -0.28px;
 }
 
-/* 서비스 마크 — 원래 사이트가 아니라 PromButter 의 UI 임을 알리는 최소 표시. */
+/* 서비스 마크 — 원래 사이트가 아니라 PromButter 의 UI 임을 알린다.
+   워드마크는 테마에 따라 남색·크림 두 벌을 바꿔 쓴다. */
 .pb-brand {
   flex: none;
-  font-size: 14px;
-  color: #6b6b63;
+  width: 86px;
+  height: 13px;
+  background-image: var(--logo);
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: left center;
 }
 
 /* 칩은 가로로 나열하고 공간이 부족하면 가로 스크롤한다. 줄바꿈으로 바가 높아지면
@@ -45,24 +56,25 @@
   scrollbar-width: thin;
 }
 
+/* 프론트의 .tag 를 따르되, 누르는 영역 44px 을 확보한다 (RESP-101). */
 .pb-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   box-sizing: border-box;
-  min-height: 44px; /* 누르는 영역 44×44 이상 (RESP-101) */
-  padding: 4px 12px;
-  border: 1px solid #c9c9c2;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #1f1f1c; /* #ffffff 위 대비 15.8:1 */
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 1px solid var(--chip-border);
+  border-radius: var(--radius-pill);
+  background: var(--chip-bg);
+  color: var(--chip-fg);
   font: inherit;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .pb-chip:hover:not(.pb-chip-locked) {
-  border-color: #8a8a80;
+  border-color: var(--focus-ring);
 }
 
 .pb-chip-label {
@@ -78,20 +90,19 @@
 }
 
 .pb-mark-external {
-  color: #3b5bdb;
+  color: var(--mark-external);
 }
 
 .pb-mark-locked {
-  color: #8a3d3d;
+  color: var(--mark-locked);
 }
 
 /* 비활성 — 흐리게만 처리하면 대비가 낮아 읽히지 않는다. 글자색은 유지하고
    테두리와 취소선으로 상태를 드러낸다 (EXT §4.4.4). */
 .pb-chip-locked {
   border-style: dashed;
-  border-color: #8a8a80;
-  background: #e4e4de;
-  color: #3d3d38; /* #e4e4de 위 대비 9.1:1 */
+  background: var(--chip-locked-bg);
+  color: var(--chip-locked-fg);
   cursor: not-allowed;
 }
 
@@ -99,22 +110,23 @@
   text-decoration: line-through;
 }
 
+/* 프론트의 .btn--outline 을 따른다. */
 .pb-plus {
   flex: none;
   box-sizing: border-box;
   min-width: 44px;
   min-height: 44px;
-  border: 1px solid #c9c9c2;
-  border-radius: 10px;
-  background: #ffffff;
-  color: #1f1f1c;
+  border: 1px solid var(--chip-border);
+  border-radius: var(--radius-btn);
+  background: var(--chip-bg);
+  color: var(--chip-fg);
   font: inherit;
   font-size: 16px;
   cursor: pointer;
 }
 
 .pb-plus:hover {
-  border-color: #8a8a80;
+  border-color: var(--focus-ring);
 }
 
 /* 안내 — 바 안에서 칩 위에 겹쳐 띄운다. 자리를 따로 잡으면 바가 두꺼워져 LLM 화면을
@@ -129,10 +141,10 @@
   gap: 6px;
   margin: 0;
   padding: 0 12px;
-  border-radius: 10px;
-  background: #eeeeeb; /* 칩이 비쳐 글자가 읽히지 않는 것을 막는다 */
-  color: #3d3d38; /* #eeeeeb 위 대비 8.9:1 */
-  font-size: 12px;
+  border-radius: var(--radius-card);
+  background: var(--bar-bg); /* 칩이 비쳐 글자가 읽히지 않는 것을 막는다 */
+  color: var(--bar-muted);
+  font-size: 13px;
   line-height: 1.35;
 }
 
@@ -144,18 +156,19 @@
   padding: 0;
   border: 0;
   background: none;
-  color: #2b4acb;
+  color: var(--link-fg);
   font: inherit;
   text-decoration: underline;
   cursor: pointer;
 }
 
 /* 키보드로 선택된 요소가 눈에 띄어야 한다 (EXT §4.4.2 · §4.4.4).
-   호스트 사이트의 포커스 표시가 이 안까지 오지 않으므로 직접 정의한다. */
+   호스트 사이트의 포커스 표시가 이 안까지 오지 않으므로 직접 정의한다.
+   프론트에는 포커스 시안이 없어 확장에서 정의했다. */
 .pb-chip:focus-visible,
 .pb-plus:focus-visible,
 .pb-link:focus-visible {
-  outline: 3px solid #1a44d6; /* 인접 색 대비 3:1 이상 */
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
