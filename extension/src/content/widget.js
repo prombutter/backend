@@ -83,10 +83,6 @@
     {
       // Gemini 는 Quill 편집기를 쓴다.
       test: (host) => host === 'gemini.google.com',
-      // 입력창을 감싼 안쪽 컨테이너는 카드보다 왼쪽으로 나가 있고 카드가
-      // overflow:hidden 이라, 그 안에 바를 넣으면 로고 쪽이 잘린다.
-      // 카드 바깥 껍데기를 앵커로 삼아 카드 위에 얹는다.
-      anchorSelectors: ['fieldset.input-area-container', 'input-area-v2', '.input-area'],
       composerSelectors: [
         'rich-textarea div.ql-editor[contenteditable="true"]',
         'div.ql-editor[contenteditable="true"]',
@@ -153,15 +149,36 @@
     return best;
   }
 
-  // 입력창 자체가 아니라 그것을 감싼 블록 위에 바를 놓아야 레이아웃이 덜 깨진다.
-  // 사이트가 앵커를 따로 지정하면 그쪽을 먼저 쓴다 — 입력창 바로 위가 늘 안전한
-  // 자리는 아니고, 잘라내는 껍데기 안쪽이면 바가 잘린다.
+  // 바는 입력 상자 '밖' 위에 놓는다.
+  //
+  // 입력창 바로 위에 넣으면 사이트가 그린 둥근 입력 상자 안으로 들어가, 남의 UI 를
+  // 파고든 것처럼 보이고 상자가 잘라내기도 한다(Gemini 실측: 카드가 overflow:hidden
+  // 이라 로고가 잘렸다). 그렇다고 무작정 위로 올리면 입력창에서 멀어진다.
+  //
+  // 그래서 입력창을 '바짝 감싼' 껍데기들만 타고 올라간다. 상자를 그리는 요소들은
+  // 입력창과 크기가 비슷하지만, 그 위의 페이지 컨테이너는 갑자기 넓어진다. 그 경계
+  // 직전에서 멈추면 상자 바로 바깥이 된다.
+  const ANCHOR_MAX_STEPS = 8;
+  const ANCHOR_WIDTH_SLACK = 1.6; // 입력창 대비 이 배수까지는 같은 상자로 본다
+  const ANCHOR_WIDTH_MARGIN = 400; // px
+
   function findAnchor(composer) {
+    // 사이트가 앵커를 따로 지정하면 그쪽을 먼저 쓴다.
     for (const selector of adapter.anchorSelectors || []) {
       const anchor = composer.closest(selector);
       if (anchor?.parentElement) return anchor;
     }
-    return composer.closest('form') || composer.parentElement;
+
+    const base = composer.getBoundingClientRect();
+    const limit = Math.min(base.width * ANCHOR_WIDTH_SLACK, base.width + ANCHOR_WIDTH_MARGIN);
+
+    let node = composer;
+    for (let el = composer.parentElement, i = 0; el && i < ANCHOR_MAX_STEPS; el = el.parentElement, i++) {
+      if (el === document.body || el === document.documentElement) break;
+      if (el.getBoundingClientRect().width > limit) break; // 페이지 컨테이너로 넘어갔다
+      node = el;
+    }
+    return node.parentElement ? node : composer.parentElement;
   }
 
   // ------------------------------------------------------------ 주입
@@ -620,25 +637,6 @@
     return true;
   }
 
-  // 앵커를 카드 바깥으로 잡은 사이트에서는 그 컨테이너가 화면 폭을 다 쓰기도 한다.
-  // 그대로 두면 바만 입력창보다 넓어져 다른 사이트와 다르게 보인다. 입력창이 실제로
-  // 차지하는 폭에 맞춰 가운데로 모은다.
-  function alignToComposer(composer) {
-    if (!bar || !adapter.anchorSelectors) return;
-
-    // 입력창을 감싼 것 중 가장 바깥의 '보이는 카드' 폭을 기준으로 삼는다.
-    let card = composer;
-    for (let el = composer.parentElement, i = 0; el && i < 6; el = el.parentElement, i++) {
-      if (el.getBoundingClientRect().width > card.getBoundingClientRect().width) card = el;
-    }
-    const width = Math.round(card.getBoundingClientRect().width);
-    if (!width) return;
-
-    bar.host.style.width = width + 'px';
-    bar.host.style.marginLeft = 'auto';
-    bar.host.style.marginRight = 'auto';
-  }
-
   function mount() {
     if (surrendered) return;
 
@@ -663,7 +661,6 @@
         anchor.parentElement.insertBefore(bar.host, anchor);
       }
       anchorRef = anchor;
-      alignToComposer(composer);
       observeFrom(anchor.parentElement);
       return;
     }
@@ -672,7 +669,6 @@
 
     buildBar(anchor);
     anchorRef = anchor;
-    alignToComposer(composer);
     observeFrom(anchor.parentElement);
     // 사이트 구조가 바뀌어 엉뚱한 곳에 붙었을 때 눈으로 확인할 단서를 남긴다.
     console.debug('[prombutter] 프롬프트 바 부착', composer);
@@ -737,11 +733,6 @@
     observeFrom(document.body);
     mount();
   }, FALLBACK_CHECK_MS);
-
-  window.addEventListener('resize', () => {
-    const composer = currentComposer();
-    if (composer) alignToComposer(composer);
-  });
 
   observeFrom(document.body);
   mount();
