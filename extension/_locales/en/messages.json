@@ -1,0 +1,77 @@
+{
+  "extName": {
+    "message": "Prombutter"
+  },
+  "extDescription": {
+    "message": "Insert your favorite prompts straight into ChatGPT and Claude."
+  },
+  "actionTitle": {
+    "message": "Open Prombutter"
+  },
+  "popupBody": {
+    "message": "Insert your favorite prompts into ChatGPT and Claude."
+  },
+  "optionsTitle": {
+    "message": "Prombutter settings"
+  },
+  "barLabel": {
+    "message": "Prombutter prompt bar"
+  },
+  "actionNewPrompt": {
+    "message": "Create a new prompt"
+  },
+  "a11yNewPrompt": {
+    "message": "Create a new prompt, opens in a new tab"
+  },
+  "actionLogin": {
+    "message": "Sign in"
+  },
+  "actionOpenWebapp": {
+    "message": "Add favorites on the web"
+  },
+  "actionRetry": {
+    "message": "Try again"
+  },
+  "tooltipHasVariables": {
+    "message": "Fill in values on the web"
+  },
+  "a11yOpensNewTab": {
+    "message": "Needs values, so it opens in a new tab"
+  },
+  "a11yLocked": {
+    "message": "Unavailable right now, it uses a deleted part"
+  },
+  "statusLoading": {
+    "message": "Loading your favorites."
+  },
+  "statusEmpty": {
+    "message": "Favorite a prompt on the web and it will show up here."
+  },
+  "statusInjected": {
+    "message": "The prompt is in the message box."
+  },
+  "statusSignedIn": {
+    "message": "You can use your favorite prompts now."
+  },
+  "errNotReady": {
+    "message": "Couldn't insert the prompt. The page isn't ready yet. Please try again in a moment."
+  },
+  "errPartial": {
+    "message": "The prompt didn't fully make it into the message box. Please reload and try again."
+  },
+  "errNoComposer": {
+    "message": "Couldn't find the message box. The page layout seems to have changed. Please reload and try again."
+  },
+  "errLoadFailed": {
+    "message": "Couldn't load your favorites. The connection looks unstable. Please try again."
+  },
+  "errLoginRequired": {
+    "message": "Sign in to use your favorite prompts right away."
+  },
+  "errTabBlocked": {
+    "message": "Couldn't open a new tab. Your browser is blocking pop-ups. Please allow them from the right side of the address bar."
+  },
+  "errLocked": {
+    "message": "This prompt uses a deleted part. Please restore the part or tidy up the blocks on the web, then try again."
+  }
+}

@@ -1,0 +1,17 @@
+body {
+  min-width: 280px;
+  margin: 0;
+  padding: 16px;
+  font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+p {
+  margin: 0;
+  font-size: 13px;
+  color: #555;
+}

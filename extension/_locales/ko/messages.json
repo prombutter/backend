@@ -1,0 +1,77 @@
+{
+  "extName": {
+    "message": "프롬버터"
+  },
+  "extDescription": {
+    "message": "즐겨찾기한 프롬프트를 ChatGPT·Claude 입력창에 바로 넣어요."
+  },
+  "actionTitle": {
+    "message": "프롬버터 열기"
+  },
+  "popupBody": {
+    "message": "즐겨찾기한 프롬프트를 ChatGPT·Claude 입력창에 넣어요."
+  },
+  "optionsTitle": {
+    "message": "프롬버터 설정"
+  },
+  "barLabel": {
+    "message": "프롬버터 프롬프트 바"
+  },
+  "actionNewPrompt": {
+    "message": "새 프롬프트 만들기"
+  },
+  "a11yNewPrompt": {
+    "message": "새 프롬프트 만들기, 새 탭이 열려요"
+  },
+  "actionLogin": {
+    "message": "로그인"
+  },
+  "actionOpenWebapp": {
+    "message": "웹에서 즐겨찾기 등록하기"
+  },
+  "actionRetry": {
+    "message": "다시 시도"
+  },
+  "tooltipHasVariables": {
+    "message": "웹에서 값 입력"
+  },
+  "a11yOpensNewTab": {
+    "message": "값을 입력해야 해서 새 탭이 열려요"
+  },
+  "a11yLocked": {
+    "message": "지금은 쓸 수 없어요. 삭제된 파츠가 있어요"
+  },
+  "statusLoading": {
+    "message": "즐겨찾기를 불러오는 중이에요."
+  },
+  "statusEmpty": {
+    "message": "웹에서 프롬프트를 즐겨찾기에 등록하면 여기에 나타나요."
+  },
+  "statusInjected": {
+    "message": "프롬프트를 입력창에 넣었어요."
+  },
+  "statusSignedIn": {
+    "message": "이제 즐겨찾기 프롬프트를 쓸 수 있어요."
+  },
+  "errNotReady": {
+    "message": "프롬프트를 넣지 못했어요. 페이지가 아직 준비되지 않았어요. 잠시 뒤에 다시 눌러 주세요."
+  },
+  "errPartial": {
+    "message": "프롬프트가 입력창에 다 들어가지 않았어요. 새로고침한 뒤 다시 눌러 주세요."
+  },
+  "errNoComposer": {
+    "message": "입력창을 찾지 못했어요. 페이지 구조가 바뀐 것 같아요. 새로고침한 뒤 다시 눌러 주세요."
+  },
+  "errLoadFailed": {
+    "message": "즐겨찾기를 불러오지 못했어요. 연결이 불안정한 것 같아요. 다시 시도해 주세요."
+  },
+  "errLoginRequired": {
+    "message": "로그인하면 즐겨찾기 프롬프트를 바로 쓸 수 있어요."
+  },
+  "errTabBlocked": {
+    "message": "새 탭을 열지 못했어요. 브라우저가 팝업을 막고 있어요. 주소창 오른쪽에서 팝업을 허용해 주세요."
+  },
+  "errLocked": {
+    "message": "이 프롬프트에 삭제된 파츠가 있어요. 웹에서 파츠를 복구하거나 블록을 정리한 뒤에 다시 써 주세요."
+  }
+}
