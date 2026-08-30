@@ -3,6 +3,8 @@
  * 값의 진원은 프론트엔드 styles/tokens.css 다.
  */
 
+@import url("pretendard.css");
+
 :root {
   --navy-900: #1a1b2f;
   --navy-700: #323448;

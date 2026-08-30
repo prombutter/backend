@@ -54,9 +54,9 @@
 
   // ------------------------------------------------------------ 사이트 어댑터
   //
-  // 지원 도메인은 chatgpt.com·claude.ai 뿐이다. 구 chat.openai.com 은 쓰지 않는다
-  // (EXT §4.2.1). 두 사이트 모두 입력창이 contenteditable 이고 DOM 이 자주 바뀌므로
-  // 후보 선택자를 순서대로 훑고 처음 보이는 것을 입력창으로 삼는다.
+  // 지원 도메인은 chatgpt.com·claude.ai·gemini.google.com 이다. 구 chat.openai.com 은
+  // 쓰지 않는다 (EXT §4.2.1). 세 사이트 모두 입력창이 contenteditable 이고 DOM 이 자주
+  // 바뀌므로, 후보를 모아 가시성 점수로 고른다.
 
   const ADAPTERS = [
     {
@@ -76,6 +76,17 @@
       composerSelectors: [
         'div[contenteditable="true"].ProseMirror',
         'fieldset div[contenteditable="true"]',
+        'div[contenteditable="true"]',
+        'textarea',
+      ],
+    },
+    {
+      // Gemini 는 Quill 편집기를 쓴다.
+      test: (host) => host === 'gemini.google.com',
+      composerSelectors: [
+        'rich-textarea div.ql-editor[contenteditable="true"]',
+        'div.ql-editor[contenteditable="true"]',
+        'rich-textarea div[contenteditable="true"]',
         'div[contenteditable="true"]',
         'textarea',
       ],
@@ -505,7 +516,23 @@
 
   // ------------------------------------------------------------ 부착
 
+  // 폰트는 문서 단위로만 등록된다 — Shadow DOM 안에 넣은 @font-face 는 무시되므로
+  // 정의만 호스트 문서 head 에 심는다. 이 시트에는 @font-face 밖에 없어서 호스트
+  // 페이지의 다른 요소를 건드리지 않는다. 호스트 CSP 가 막으면 조용히 실패하고
+  // 시스템 폰트로 내려간다.
+  const FONT_LINK_ID = 'prombutter-font';
+
+  function ensureFont() {
+    if (document.getElementById(FONT_LINK_ID)) return;
+    const link = document.createElement('link');
+    link.id = FONT_LINK_ID;
+    link.rel = 'stylesheet';
+    link.href = chrome.runtime.getURL('styles/pretendard.css');
+    (document.head || document.documentElement).append(link);
+  }
+
   function buildBar(anchor) {
+    ensureFont();
     const host = document.createElement('div');
     host.id = BAR_ID;
     const shadow = host.attachShadow({ mode: 'open' });

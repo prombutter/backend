@@ -36,7 +36,8 @@
     {
       "matches": [
         "https://chatgpt.com/*",
-        "https://claude.ai/*"
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
       ],
       "js": [
         "src/content/widget.js"
@@ -59,13 +60,16 @@
       "resources": [
         "styles/tokens.css",
         "styles/widget.css",
+        "styles/pretendard.css",
+        "assets/fonts/*.woff2",
         "assets/logo.svg",
         "assets/logo-dark.svg",
         "assets/icons/*"
       ],
       "matches": [
         "https://chatgpt.com/*",
-        "https://claude.ai/*"
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
       ]
     }
   ]

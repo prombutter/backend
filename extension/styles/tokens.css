@@ -31,8 +31,8 @@
   --border-button-secondary: rgba(153, 153, 153, 0.5);
 
   /* ── 타이포 ──────────────────────────────────────────────── */
-  /* Pretendard 는 프론트가 CDN 으로 불러오지만, 확장은 호스트 페이지의 CSP 에 막힐 수
-     있어 로컬 설치본만 쓰고 없으면 시스템 폰트로 내려간다. */
+  /* Pretendard 는 확장에 함께 담는다 (pretendard.css · assets/fonts).
+     프론트처럼 CDN 을 쓰면 호스트 페이지의 CSP 에 막힐 수 있다. */
   --font-body:
     "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
     "Malgun Gothic", sans-serif;
