@@ -9,6 +9,7 @@ from app.models import (
     Prompt,
     PromptBlock,
     Variable,
+    BlockType,
 )
 from app.models.parts import Part, EntityTag
 
@@ -56,15 +57,23 @@ async def _execute_hard_delete(session, cutoff, now):
             res = await session.execute(delete(Prompt).where(Prompt.id.in_(prompt_ids)))
             deleted_prompts_count = res.rowcount
 
-        # 파츠 삭제 — 아직 참조 중인 블록이 남아있으면 건너뜀(FK 보호)
+        # 파츠 삭제 (참조 중인 블록은 INLINE 텍스트로 변환하여 본문 보존 후 삭제)
         if part_ids:
             logger.info(f"Found {len(part_ids)} parts to hard delete.")
-            # 아직 살아있는 프롬프트가 참조하는 part_id는 제외
-            still_ref_stmt = select(PromptBlock.part_id).where(PromptBlock.part_id.in_(part_ids)).distinct()
-            still_ref = set((await session.execute(still_ref_stmt)).scalars().all())
-            safe_ids = [pid for pid in part_ids if pid not in still_ref]
-            if still_ref:
-                logger.warning(f"Skipping {len(still_ref)} parts still referenced by prompt blocks.")
+            
+            # 1. 삭제할 파츠들의 본문 조회
+            parts_to_delete = (await session.execute(select(Part.id, Part.body).where(Part.id.in_(part_ids)))).all()
+            part_body_map = {row.id: row.body for row in parts_to_delete}
+            
+            # 2. 참조 중인 프롬프트 블록 찾아서 인라인으로 변환
+            blocks = (await session.execute(select(PromptBlock).where(PromptBlock.part_id.in_(part_ids)))).scalars().all()
+            for block in blocks:
+                block.block_type = BlockType.INLINE
+                block.inline_body = part_body_map.get(block.part_id, "")
+                block.part_id = None
+                
+            # 3. 일괄 삭제 진행
+            safe_ids = part_ids
             if safe_ids:
                 await session.execute(delete(Variable).where(Variable.entity_id.in_(safe_ids), Variable.entity_type == 'PART'))
                 await session.execute(delete(EntityTag).where(EntityTag.entity_id.in_(safe_ids), EntityTag.entity_type == 'PART'))

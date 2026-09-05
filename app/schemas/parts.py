@@ -30,3 +30,13 @@ class PartResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+class AnalyzeUpdateRequest(BaseModel):
+    body: str = Field(..., max_length=700)
+
+class LockedPromptInfo(BaseModel):
+    id: uuid.UUID
+    title: str
+
+class AnalyzeUpdateResponse(BaseModel):
+    locked_prompts: List[LockedPromptInfo]

@@ -10,7 +10,7 @@ from app.deps import get_path_workspace
 from app.models import Workspace, PromptBlock
 from app.models.parts import Part, Tag, EntityTag
 from app.models import Variable
-from app.schemas.parts import PartCreate, PartUpdate, PartResponse
+from app.schemas.parts import PartCreate, PartUpdate, PartResponse, AnalyzeUpdateRequest, AnalyzeUpdateResponse, LockedPromptInfo
 from app.core.errors import AppError
 router = APIRouter(prefix="/workspaces/{workspace_id}/parts", tags=["Parts"])
 
@@ -97,54 +97,68 @@ async def _title_taken(session: AsyncSession, workspace_id: uuid.UUID, title: st
     return False
 
 
-async def _revalidate_prompt_vars_on_part_update(
-    session: AsyncSession, workspace_id: uuid.UUID, part_id: uuid.UUID, new_body: str
-) -> None:
-    """PB-107: 파츠 body 변경 시, 이 파츠를 참조하는 프롬프트들의 변수 합계가 20개를 초과하면 차단.
-
-    prompts.py의 _validate_part_refs_and_vars와 동일한 정규식·카운팅 로직을 사용한다.
-    """
+@router.post("/{id}/analyze-update", response_model=AnalyzeUpdateResponse)
+async def analyze_update(
+    id: uuid.UUID,
+    req: AnalyzeUpdateRequest,
+    workspace: Workspace = Depends(get_path_workspace),
+    session: AsyncSession = Depends(get_session)
+):
     from app.models import Prompt, PromptBlock, BlockType
 
     _VAR_RE = re.compile(r"\{\{\s*([^{}\n]+?)\s*\}\}")
-
     def _extract(text: str) -> list[str]:
         names = [m.strip() for m in _VAR_RE.findall(text)]
         return list(dict.fromkeys(n for n in names if n))
 
-    # 이 파츠를 참조하는 프롬프트 ID 목록
-    ref_prompt_ids = list(await session.scalars(
-        select(PromptBlock.prompt_id).where(PromptBlock.part_id == part_id).distinct()
-    ))
-    if not ref_prompt_ids:
-        return
-
-    for pid in ref_prompt_ids:
-        # 프롬프트가 삭제 상태이면 검증 스킵
-        prompt = await session.get(Prompt, pid)
-        if prompt is None or prompt.deleted_at is not None:
-            continue
-
-        blocks = list(await session.scalars(
-            select(PromptBlock).where(PromptBlock.prompt_id == pid).order_by(PromptBlock.sort_order)
-        ))
-        text_content = ""
-        for b in blocks:
-            if b.block_type == BlockType.INLINE:
-                text_content += (b.inline_body or "") + "\n"
-            elif b.block_type == BlockType.PART and b.part_id:
-                if b.part_id == part_id:
-                    text_content += new_body + "\n"  # 변경될 body 사용
-                else:
-                    other_body = await session.scalar(select(Part.body).where(Part.id == b.part_id))
-                    text_content += (other_body or "") + "\n"
-
+    # 1. 이 파츠를 참조하는 모든 활성 Prompt 조회
+    stmt_prompts = (
+        select(Prompt.id, Prompt.title)
+        .join(PromptBlock, PromptBlock.prompt_id == Prompt.id)
+        .where(PromptBlock.part_id == id, Prompt.deleted_at.is_(None))
+        .distinct()
+    )
+    prompts_res = await session.execute(stmt_prompts)
+    prompts = prompts_res.all()
+    
+    if not prompts:
+        return AnalyzeUpdateResponse(locked_prompts=[])
+        
+    prompt_ids = [p.id for p in prompts]
+    prompt_titles = {p.id: p.title for p in prompts}
+    
+    # 2. 찾은 Prompt들의 전체 PromptBlock 조회
+    blocks_res = await session.execute(
+        select(PromptBlock).where(PromptBlock.prompt_id.in_(prompt_ids)).order_by(PromptBlock.sort_order)
+    )
+    blocks = blocks_res.scalars().all()
+    
+    # 3. 블록에 포함된 "다른 파츠"들의 본문 조회
+    other_part_ids = list(set([b.part_id for b in blocks if b.block_type == BlockType.PART and b.part_id and b.part_id != id]))
+    part_bodies = {}
+    if other_part_ids:
+        parts_res = await session.execute(select(Part.id, Part.body).where(Part.id.in_(other_part_ids)))
+        part_bodies = {row.id: row.body for row in parts_res.all()}
+        
+    # 4. 프롬프트별 텍스트 병합 및 변수 계산
+    from collections import defaultdict
+    texts_by_prompt = defaultdict(str)
+    
+    for b in blocks:
+        if b.block_type == BlockType.INLINE:
+            texts_by_prompt[b.prompt_id] += (b.inline_body or "") + "\n"
+        elif b.block_type == BlockType.PART and b.part_id:
+            if b.part_id == id:
+                texts_by_prompt[b.prompt_id] += req.body + "\n"
+            else:
+                texts_by_prompt[b.prompt_id] += (part_bodies.get(b.part_id) or "") + "\n"
+                
+    locked_prompts = []
+    for pid, text_content in texts_by_prompt.items():
         if len(_extract(text_content)) > 20:
-            raise AppError(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "ERR-VAR-004",
-                f"이 파츠를 수정하면 프롬프트 '{prompt.title}'의 변수가 20개를 초과합니다. 변수를 줄인 뒤 다시 시도해 주세요.",
-            )
+            locked_prompts.append(LockedPromptInfo(id=pid, title=prompt_titles[pid]))
+            
+    return AnalyzeUpdateResponse(locked_prompts=locked_prompts)
 
 @router.post("", response_model=PartResponse)
 async def create_part(
@@ -198,9 +212,9 @@ async def restore_part(id: uuid.UUID,
     if active_count >= 500:
         raise AppError(status.HTTP_422_UNPROCESSABLE_ENTITY, "ERR-QUOTA-004", "파츠는 계정당 500개까지 만들 수 있어요. 일부를 정리한 뒤 다시 시도해 주세요.")
 
-    # 제목 중복 검사 — 중복 시 '(복원됨)' 접미사 부여
+    # 제목 중복 검사 — 중복 시 복원 차단 (FS-201 §3.5.2)
     if await _title_taken(session, workspace.id, part.title):
-        part.title = f"{part.title} (복원됨)"[:100]
+        raise AppError(status.HTTP_409_CONFLICT, "ERR-PART-001", "이미 동일한 이름의 파츠가 있습니다.")
 
     part.deleted_at = None
     part.purge_at = None
@@ -240,16 +254,13 @@ async def permanent_delete_part(id: uuid.UUID,
     if not part:
         raise AppError(status.HTTP_404_NOT_FOUND, "ERR-PART-002", "휴지통에서 파츠를 찾을 수 없습니다.")
 
-    # FK 안전 검사 — 프롬프트가 이 파츠를 참조 중이면 삭제 차단
-    ref_count = await session.scalar(
-        select(func.count()).select_from(PromptBlock).where(PromptBlock.part_id == id)
-    )
-    if ref_count:
-        raise AppError(
-            status.HTTP_409_CONFLICT,
-            "ERR-PART-004",
-            f"이 파츠를 참조하는 프롬프트가 {ref_count}건 있어요. 참조를 먼저 제거해 주세요.",
-        )
+    # 참조 중인 프롬프트 블록을 INLINE으로 변환 (본문 보존)
+    from app.models import BlockType
+    blocks = (await session.execute(select(PromptBlock).where(PromptBlock.part_id == id))).scalars().all()
+    for block in blocks:
+        block.block_type = BlockType.INLINE
+        block.inline_body = part.body
+        block.part_id = None
 
     await session.execute(EntityTag.__table__.delete().where(EntityTag.entity_id == id, EntityTag.entity_type == 'PART'))
     await session.execute(Variable.__table__.delete().where(Variable.entity_id == id, Variable.entity_type == 'PART'))
@@ -351,8 +362,6 @@ async def update_part(id: uuid.UUID,
         
     if part_in.body is not None:
         await extract_and_save_variables(session, part.id, part_in.body)
-        # PB-107: 파츠 body 변경 시, 이 파츠를 참조하는 프롬프트의 변수 20개 상한 재검증
-        await _revalidate_prompt_vars_on_part_update(session, workspace.id, part.id, part_in.body)
         
     if part_in.tags is not None:
         await handle_tags(session, workspace.id, part.id, part_in.tags)
