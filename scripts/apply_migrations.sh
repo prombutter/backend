@@ -53,6 +53,35 @@ if [[ ${#FILES[@]} -eq 0 ]]; then
   exit 1
 fi
 
+# --- 안전 가드 ---------------------------------------------------------------
+# 0001_init.sql 은 이름과 달리 멱등하지 않다. 16개 테이블을 DROP ... CASCADE 한 뒤 다시
+# 만든다. 원장이 비어 있는데 이미 앱 테이블이 들어 있는 DB 에 그대로 적용하면 데이터가
+# 전부 사라진다. 그 DB 는 "마이그레이션이 필요한 DB" 가 아니라 "원장에 편입되지 않은
+# DB" 이고, 둘은 겉으로 똑같아 보인다. 여기서 갈라 준다.
+LEDGER_ROWS=$(psql_run -tA -c "select count(*) from public.schema_migrations")
+EXISTING_APP_TABLES=$(psql_run -tA -c "
+  select count(*) from information_schema.tables
+   where table_schema = 'public'
+     and table_name in ('users', 'workspaces', 'prompts', 'parts', 'tokens')
+")
+
+if [[ "$MODE" == "apply" && "$LEDGER_ROWS" == "0" && "$EXISTING_APP_TABLES" != "0" ]]; then
+  cat >&2 <<'GUARD'
+[migrate] 중단합니다.
+
+이 DB 에는 이미 앱 테이블이 있는데 schema_migrations 원장은 비어 있습니다.
+지금 적용하면 0001_init.sql 이 DROP TABLE ... CASCADE 로 기존 데이터를 전부 지웁니다.
+
+이 DB 가 이미 최신 스키마라면 원장에 편입만 하십시오:
+
+    scripts/apply_migrations.sh <DATABASE_URL> --baseline
+
+정말 처음부터 새로 만들 생각이라면 빈 DB 를 쓰십시오.
+GUARD
+  exit 1
+fi
+# -----------------------------------------------------------------------------
+
 PENDING=()
 for f in "${FILES[@]}"; do
   seen=$(psql_run -tA -c "select 1 from public.schema_migrations where filename = '$f'")

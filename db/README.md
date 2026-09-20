@@ -6,7 +6,12 @@
 ## 폴더 구조
 
 - `db/migrations/NNNN_<설명>.sql` — 번호순(0001, 0002, …) 누적 마이그레이션. 빈 DB 에 0001 부터 순서대로 실행하면 최신 스키마가 된다.
-- `0001_init.sql` — 초기 전체 스키마. 확장(`citext`·`pgcrypto`) + enum 10종 + 전체 테이블/인덱스/FK 포함. **빈 DB 에 단독 실행 가능.**
+- `0001_init.sql` — 초기 전체 스키마. 확장(`citext`·`pgcrypto`) + enum 10종 + 전체 테이블/인덱스/FK 포함.
+  **빈 DB 에 단독 실행 가능.**
+  ⚠️ **다만 멱등하지 않다.** 이 파일은 생성 전에 16개 테이블을 `DROP TABLE ... CASCADE` 한다.
+  데이터가 들어 있는 DB 에 다시 돌리면 전부 지워진다. 이미 스키마가 올라간 DB 는
+  적용이 아니라 `scripts/apply_migrations.sh <URL> --baseline` 으로 원장에 편입만 한다.
+  러너가 이 상황(앱 테이블은 있는데 원장이 빈 상태)을 감지해 적용을 거부한다.
 
 ## 배포 시 적용 경로
 
@@ -31,7 +36,9 @@ psql "<DATABASE_URL>" -f db/migrations/0001_init.sql
 2. **추가 방법** — 변경이 생기면 새 파일 `db/migrations/000N_<설명>.sql` 을 추가한다.
    이미 적용·전달된 파일은 **수정하지 않는다** (적용된 DB 와의 정합 유지).
 3. **멱등성 권장** — 가능한 한 `IF NOT EXISTS` / `IF EXISTS` / `DO $$ … duplicate_object … $$` 패턴으로
-   재실행에 안전하게 작성한다 (`0001_init.sql` 의 prelude 참고).
+   재실행에 안전하게 작성한다 (`0002_add_unique_constraints.sql` 참고).
+   `DROP TABLE` 로 시작하는 재생성 방식은 쓰지 않는다. `0001_init.sql` 이 그 방식인데,
+   그건 빈 DB 전용 초기 파일이라 넘어간 것이지 따라야 할 본보기가 아니다.
 4. **인코딩** — 마이그레이션 SQL 은 **UTF-8 (BOM 없음)** 으로 저장한다 (psql·Supabase 호환).
 5. **검수** — `0001_init.sql` 의 enum 값은 컬럼 코멘트에서 역추출된 것이다(파일 머리말 경고 참조).
    신규 enum·값 추가 시 실제 도메인 값과 대조한다.
