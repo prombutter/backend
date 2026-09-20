@@ -8,6 +8,12 @@
 - `db/migrations/NNNN_<설명>.sql` — 번호순(0001, 0002, …) 누적 마이그레이션. 빈 DB 에 0001 부터 순서대로 실행하면 최신 스키마가 된다.
 - `0001_init.sql` — 초기 전체 스키마. 확장(`citext`·`pgcrypto`) + enum 10종 + 전체 테이블/인덱스/FK 포함. **빈 DB 에 단독 실행 가능.**
 
+## 배포 시 적용 경로
+
+CI/CD 가 배포 직전에 `scripts/apply_migrations.sh` 로 이 폴더의 SQL 을 대상 DB 에 적용한다.
+적용 기록은 대상 DB 의 `public.schema_migrations` 에 남고, 이미 적용된 파일은 건너뛴다.
+브랜치·환경 매핑과 롤백 절차는 [DEPLOYMENT.md](../DEPLOYMENT.md) 를 본다.
+
 ## 빈 DB 최초 설치
 
 ```bash

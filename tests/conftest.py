@@ -121,6 +121,9 @@ async def make_email():
                     {"u": uid},
                 )
                 await conn.execute(text("delete from workspaces where owner_id=:u"), {"u": uid})
+                # tokens(비밀번호 재설정 등)는 users 를 FK 로 물고 있어 먼저 지운다.
+                # 이 줄이 없으면 forgot/reset 계열 테스트 teardown 이 fk_tokens_user 로 깨진다.
+                await conn.execute(text("delete from tokens where user_id=:u"), {"u": uid})
                 await conn.execute(text("delete from users where id=:u"), {"u": uid})
             # login_attempts는 email_hash만 저장하므로 해시로 매칭해 삭제
             await conn.execute(

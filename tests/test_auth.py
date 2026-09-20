@@ -197,7 +197,7 @@ async def test_reset_password_success_and_reuse_400(client, make_email):
     assert r_login.status_code == 200
     
     # 4. Try reusing the token
-    r_reuse = await client.post("/auth/reset-password", json={"token": raw_token, "new_password": "AnotherPassword!"})
+    r_reuse = await client.post("/auth/reset-password", json={"token": raw_token, "new_password": "AnotherPassword123!"})
     assert r_reuse.status_code == 400
 
 async def test_reset_password_expired_400(client, make_email):
