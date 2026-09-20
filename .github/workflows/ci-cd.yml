@@ -127,7 +127,9 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
           COOKIE_SECURE: ${{ vars.COOKIE_SECURE || 'true' }}
-          COOKIE_SAMESITE: ${{ vars.COOKIE_SAMESITE || 'lax' }}
+          # PB-140 확정: FE(vercel.app) 와 API(run.app) 가 서로 다른 사이트이고
+          # 익스텐션은 어떤 구성에서도 크로스 사이트다. none 이라야 세션이 전송된다.
+          COOKIE_SAMESITE: ${{ vars.COOKIE_SAMESITE || 'none' }}
           COOKIE_DOMAIN: ${{ vars.COOKIE_DOMAIN }}
           ACCESS_TOKEN_EXPIRE_MINUTES: ${{ vars.ACCESS_TOKEN_EXPIRE_MINUTES || '60' }}
           REFRESH_TOKEN_EXPIRE_MINUTES: ${{ vars.REFRESH_TOKEN_EXPIRE_MINUTES || '10080' }}
