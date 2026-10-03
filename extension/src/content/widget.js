@@ -178,6 +178,42 @@
       if (el.getBoundingClientRect().width > limit) break; // 페이지 컨테이너로 넘어갔다
       node = el;
     }
+
+    // 너비 비교만 하면 편집기보다 넓은 흰 카드 안에서 멈춘다. Gemini 는 그 카드가
+    // 바를 잘라 글자를 세로로 접는다. 한도 안에서 가장 둥근 바깥 카드를 고른다.
+    // 안쪽 래퍼도 모서리가 둥근 경우가 있어, 처음 걸린 카드에서 끊으면 다시 카드 안에 남는다.
+    const cardLimit = Math.max(base.width * 2.4, base.width + 520);
+    let card = null;
+    let cardRadius = 0;
+    for (let el = node, i = 0; el && i < ANCHOR_MAX_STEPS; el = el.parentElement, i++) {
+      if (el === document.body || el === document.documentElement) break;
+      if (el.getBoundingClientRect().width > cardLimit) break;
+
+      const style = window.getComputedStyle(el);
+      const radius = Math.max(
+        parseFloat(style.borderTopLeftRadius) || 0,
+        parseFloat(style.borderTopRightRadius) || 0,
+        parseFloat(style.borderBottomRightRadius) || 0,
+        parseFloat(style.borderBottomLeftRadius) || 0,
+      );
+      // 같은 둥글기면 더 바깥 카드를 남긴다. 더 각진 조상(페이지 껍데기)으로는 올리지 않는다.
+      if (radius < 12 || radius < cardRadius) continue;
+
+      const bg = style.backgroundColor;
+      const hasBg = (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)') ||
+        (style.backgroundImage && style.backgroundImage !== 'none');
+      const hasBorder = (parseFloat(style.borderTopWidth) || parseFloat(style.borderBottomWidth) || 0) > 0;
+      const hasShadow = Boolean(style.boxShadow && style.boxShadow !== 'none');
+      const hasOverflow = ['hidden', 'clip'].includes(style.overflowX) ||
+        ['hidden', 'clip'].includes(style.overflowY);
+
+      if (hasBg || hasBorder || hasShadow || hasOverflow) {
+        card = el;
+        cardRadius = radius;
+      }
+    }
+
+    if (card?.parentElement) return card;
     return node.parentElement ? node : composer.parentElement;
   }
 
@@ -284,7 +320,13 @@
       dismissStatus = null;
     }
 
-    statusEl.replaceChildren(document.createTextNode(text || ''));
+    statusEl.replaceChildren();
+    if (text) {
+      const textSpan = document.createElement('span');
+      textSpan.className = 'pb-status-text';
+      textSpan.textContent = text;
+      statusEl.append(textSpan);
+    }
     statusEl.classList.toggle('pb-status-empty', !text);
 
     if (action) {
@@ -294,7 +336,7 @@
       button.textContent = action.label;
       button.addEventListener('click', action.onClick);
       button.addEventListener('keydown', onItemKeydown);
-      statusEl.append(' ', button);
+      statusEl.append(button);
     }
 
     // 주입 성공·실패 같은 일시적 안내는 칩을 가린 채로 남으면 안 된다.
@@ -562,6 +604,19 @@
     ensureFont();
     const host = document.createElement('div');
     host.id = BAR_ID;
+
+    // 호스트는 라이트 DOM 이라 :host 만으로는 사이트 스타일에 찌그러진다. 인라인으로 너비를 강제한다.
+    for (const [prop, val] of [
+      ['display', 'block'],
+      ['box-sizing', 'border-box'],
+      ['width', '100%'],
+      ['max-width', '100%'],
+      ['min-width', '0'],
+      ['flex', '0 0 auto'],
+    ]) {
+      host.style.setProperty(prop, val, 'important');
+    }
+
     const shadow = host.attachShadow({ mode: 'open' });
 
     // 토큰을 먼저, 그것을 쓰는 규칙을 나중에. 순서가 바뀌면 var() 가 빈 값이 된다.
