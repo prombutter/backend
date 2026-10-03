@@ -1,10 +1,12 @@
-// Prombutter service worker (MV3)
+﻿// Prombutter service worker (MV3)
 //
 // 콘텐츠 스크립트는 LLM 사이트 오리진에서 돌기 때문에 백엔드를 직접 부르면
 // 교차 출처 요청이 되고 인증 쿠키도 실리지 않는다. 그래서 네트워크는 전부 여기서 하고,
 // 프롬프트 바는 메시지로만 대화한다.
 
 import {
+  API_BASE,
+  DEVELOPER_LOGIN_AVAILABLE,
   ERR,
   MAX_FAVORITES,
   MAX_PROMPT_LENGTH,
@@ -13,11 +15,13 @@ import {
   STATE,
   WEBAPP_BASE,
 } from '../shared/config.js';
-import { apiFetch, UnauthorizedError } from '../shared/api.js';
+import { apiFetch, ApiError, UnauthorizedError } from '../shared/api.js';
 
 const WORKSPACE_CACHE_KEY = 'workspaceId';
 const EVENT_BUFFER_KEY = 'eventBuffer';
 const EVENT_BUFFER_MAX = 200;
+let developerLoginInFlight = null;
+let trackingInFlight = Promise.resolve();
 
 chrome.runtime.onInstalled.addListener(() => {
   console.info('[prombutter] installed');
@@ -25,14 +29,9 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // ---------------------------------------------------------------- 워크스페이스
 
-// 워크스페이스는 계정당 1개로 고정이라 세션 스토리지에 캐시한다.
-// 브라우저를 닫으면 사라지므로 계정을 바꿔도 남은 값이 따라오지 않는다.
+// 웹 앱에서 계정을 바꿀 수 있으므로 현재 쿠키의 워크스페이스를 매번 조회한다.
 async function getWorkspaceId() {
-  const cached = await chrome.storage.session.get(WORKSPACE_CACHE_KEY);
-  if (cached[WORKSPACE_CACHE_KEY]) return cached[WORKSPACE_CACHE_KEY];
-
   const workspace = await apiFetch('/workspaces');
-  await chrome.storage.session.set({ [WORKSPACE_CACHE_KEY]: workspace.id });
   return workspace.id;
 }
 
@@ -76,6 +75,14 @@ async function describePrompt(workspaceId, prompt, activePartIds) {
 // ---------------------------------------------------------------- 핸들러
 
 async function handleGetFavorites() {
+  if (!(await chrome.permissions.contains({ origins: [`${new URL(API_BASE).origin}/*`] }))) {
+    try {
+      await handleTrack({ event: 'extension_api_access_result', params: { result: 'blocked', reason: 'HOST_PERMISSION_MISSING' } });
+    } catch {
+      console.warn('[prombutter] extension_api_access_result storage_failed');
+    }
+    return { state: STATE.ERROR, errorCode: ERR.API_PERMISSION_REQUIRED };
+  }
   const workspaceId = await getWorkspaceId();
   const favorites = await apiFetch(`/workspaces/${workspaceId}/prompts/favorites`);
 
@@ -132,18 +139,71 @@ async function handleOpenWebapp({ path }) {
 
 // EVENT-001 수집 엔드포인트가 백엔드에 아직 없다. 유실을 막기 위해 로컬에 쌓아두고,
 // 엔드포인트가 생기면 이 버퍼를 그대로 비워 보낸다.
-async function handleTrack({ event, params }) {
-  const stored = await chrome.storage.local.get(EVENT_BUFFER_KEY);
-  const buffer = stored[EVENT_BUFFER_KEY] || [];
-  buffer.push({ event, params, device_type: 'extension', timestamp: new Date().toISOString() });
-  await chrome.storage.local.set({ [EVENT_BUFFER_KEY]: buffer.slice(-EVENT_BUFFER_MAX) });
-  return {};
+function handleTrack({ event, params }) {
+  const pending = trackingInFlight.then(async () => {
+    const stored = await chrome.storage.local.get(EVENT_BUFFER_KEY);
+    const buffer = stored[EVENT_BUFFER_KEY] || [];
+    buffer.push({ event, params, device_type: 'extension', timestamp: new Date().toISOString() });
+    await chrome.storage.local.set({ [EVENT_BUFFER_KEY]: buffer.slice(-EVENT_BUFFER_MAX) });
+    return {};
+  });
+  trackingInFlight = pending.catch(() => {});
+  return pending;
+}
+
+function handleDeveloperLogin() {
+  if (developerLoginInFlight) return developerLoginInFlight;
+  developerLoginInFlight = (async () => {
+    const requestId = crypto.randomUUID();
+    const startedAt = performance.now();
+    let result = 'success';
+    let reason = null;
+    try {
+      if (!DEVELOPER_LOGIN_AVAILABLE) {
+        result = 'blocked';
+        reason = 'LOCAL_API_REQUIRED';
+        return { ok: false, errorCode: ERR.DEVELOPER_LOGIN_UNAVAILABLE };
+      }
+      await clearWorkspaceCache();
+      const issuedUser = await apiFetch('/auth/developer-login', {
+        method: 'POST', headers: { 'X-Requested-With': 'Prombutter-Extension' },
+      }, false);
+      // 쿠키가 실제로 전송되는지 확인한 뒤에만 위젯에 성공을 돌려준다.
+      const authenticatedUser = await apiFetch('/auth/me', {}, false);
+      if (!issuedUser.id || authenticatedUser.id !== issuedUser.id) {
+        result = 'failure';
+        reason = 'SESSION_USER_MISMATCH';
+        return { ok: false, errorCode: ERR.DEVELOPER_LOGIN_FAILED };
+      }
+      await clearWorkspaceCache();
+      return {};
+    } catch (err) {
+      result = err instanceof ApiError && [403, 404].includes(err.status) ? 'blocked' : 'failure';
+      reason = err instanceof ApiError ? err.errorCode || `HTTP_${err.status}` :
+        err instanceof UnauthorizedError ? 'SESSION_NOT_AVAILABLE' : 'NETWORK_ERROR';
+      return {
+        ok: false,
+        errorCode: result === 'blocked' ? ERR.DEVELOPER_LOGIN_UNAVAILABLE : ERR.DEVELOPER_LOGIN_FAILED,
+      };
+    } finally {
+      try {
+        await handleTrack({
+          event: 'developer_login_result',
+          params: { request_id: requestId, result, reason, duration_ms: Math.round(performance.now() - startedAt) },
+        });
+      } catch {
+        console.warn('[prombutter] developer_login_result storage_failed', requestId);
+      }
+    }
+  })().finally(() => { developerLoginInFlight = null; });
+  return developerLoginInFlight;
 }
 
 const HANDLERS = {
   [MSG.GET_FAVORITES]: handleGetFavorites,
   [MSG.RENDER_PROMPT]: handleRenderPrompt,
   [MSG.OPEN_WEBAPP]: handleOpenWebapp,
+  [MSG.DEVELOPER_LOGIN]: handleDeveloperLogin,
   [MSG.TRACK]: handleTrack,
 };
 
@@ -161,7 +221,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     .catch(async (err) => {
       if (err instanceof UnauthorizedError) {
         await clearWorkspaceCache();
-        sendResponse({ ok: false, state: STATE.LOGIN_REQUIRED, errorCode: ERR.LOGIN_REQUIRED });
+        sendResponse({
+          ok: false, state: STATE.LOGIN_REQUIRED, errorCode: ERR.LOGIN_REQUIRED,
+          developerLoginAvailable: DEVELOPER_LOGIN_AVAILABLE,
+        });
         return;
       }
       console.warn('[prombutter] request failed', message.type, err);

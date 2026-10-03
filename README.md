@@ -1,4 +1,4 @@
-# PromButter Backend
+﻿# PromButter Backend
 
 FastAPI 기반 **DB 세팅·연결·SQL 전달용** 백엔드. PostgreSQL(Supabase) 사용.
 
@@ -59,7 +59,9 @@ uv run uvicorn app.main:app --reload --port 8000
 
 ## 파일 인코딩 규칙
 
-이 레포의 모든 텍스트 파일은 **BOM 없는 UTF-8**, 줄바꿈은 **LF** 로 저장한다.
+이 레포의 텍스트 파일은 **UTF-8**, 줄바꿈은 **LF**로 저장한다.
+새로 작성하거나 수정하는 `.md`, `.ps1`, `.py`, `.js`는 **UTF-8 with BOM**으로 저장한다.
+JSON 등 다른 형식은 BOM 없는 UTF-8로 저장한다. 인코딩 검사기는 기존 BOM 없는 소스도 허용한다.
 
 파이썬은 소스 파일을 UTF-8 로만 읽는다. `app/core/utils.py` 가 UTF-16 으로
 저장된 적이 있었는데, `import` 하는 순간 아래 에러가 나면서 이 파일을 쓰는

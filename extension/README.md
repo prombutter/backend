@@ -1,4 +1,4 @@
-# Prombutter Chrome Extension
+﻿# Prombutter Chrome Extension
 
 Prombutter 프롬프트 관리 서비스의 크롬 확장 프로그램 (Manifest V3).
 
@@ -6,7 +6,8 @@ ChatGPT·Claude 입력창 위에 즐겨찾기 프롬프트를 띄우고 원클�
 
 ## 전제
 
-**백엔드는 수정하지 않는다.** 이 확장은 현재 배포된 백엔드 API 를 있는 그대로 소비한다.
+일반 기능은 현재 백엔드 API를 그대로 소비한다. 로컬 개발자 로그인은
+개발 환경 전용 `POST /auth/developer-login`을 사용한다.
 API 가 없어서 못 하는 기능은 확장 쪽에서 우회하거나 범위 밖으로 남기고, 백엔드 변경을
 전제한 구현은 두지 않는다.
 
@@ -25,14 +26,16 @@ API 가 없어서 못 하는 기능은 확장 쪽에서 우회하거나 범위 �
 
 ## 사용하는 백엔드 API
 
-전부 기존 엔드포인트다. 새로 만들어 달라고 요구하는 것은 없다.
+일반 인증과 즐겨찾기에는 기존 엔드포인트를 사용한다.
 
 | 메서드 · 경로 | 쓰임 |
 |---|---|
-| `GET /workspaces` | 워크스페이스 id (계정당 1개). 세션 캐시 |
+| `GET /workspaces` | 현재 로그인 계정의 워크스페이스 ID |
 | `GET /workspaces/{ws}/prompts/favorites` | 즐겨찾기 목록 (최대 5개 노출) |
 | `POST /workspaces/{ws}/prompts/{id}/render` | 완성 프롬프트 렌더. `missing` 이 있으면 변수 있는 프롬프트로 판정 |
 | `POST /auth/refresh` | 401 응답 시 1회 자동 갱신 |
+| `POST /auth/developer-login` | 로컬 개발 계정의 AT/RT 쿠키 발급 |
+| `GET /auth/me` | 개발자 로그인 뒤 쿠키 인증 확인 |
 
 변수 유무 판정에 `GET /prompts/{id}/variables` 대신 `render` 의 `missing` 을 쓰는 이유는
 호출을 한 번으로 줄이기 위해서다. 변수가 없으면 그 응답의 `rendered` 를 그대로 주입한다.
@@ -52,6 +55,39 @@ API 가 없어서 못 하는 기능은 확장 쪽에서 우회하거나 범위 �
 > 만약 실리지 않으면 `cookies` + `declarativeNetRequest` 권한으로 Cookie 헤더를 직접
 > 붙이는 우회가 있다. 어느 쪽이든 백엔드 변경은 필요 없다.
 
+### 개발자 로그인
+
+로컬 API를 사용하는 위젯에서는 로그인 버튼 옆에 「개발자 로그인」이 나타난다.
+백엔드를 `APP_ENV=local`과 `DEVELOPER_LOGIN_ENABLED=true`로 실행한 뒤 이 버튼을 누르면,
+이메일·비밀번호 입력 없이 전용 개발 계정으로 인증한다. 계정과 워크스페이스는 최초에
+한 번 만들고 이후 재사용한다. 기존 계정의 데이터는 개발 계정으로 옮기지 않는다.
+
+서버 실행 프로세스에 두 환경변수를 설정한다. 기본 설정에서는 개발자 로그인이 꺼져 있다.
+운영용 확장의 기본 주소는 Vercel이다. 로컬 개발 시에는 `src/shared/config.js`의
+`API_BASE`를 `http://localhost:8000`, `WEBAPP_BASE`를 `http://localhost:3000`으로 함께 바꾼다.
+운영 API를 사용하는 확장에서는 개발자 로그인 버튼을 표시하지 않는다.
+
+```powershell
+$env:APP_ENV = 'local'
+$env:DEVELOPER_LOGIN_ENABLED = 'true'
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+운영·스테이징, 외부 호스트·클라이언트, 프록시 헤더, 일반 웹 페이지의 호출은 거부한다.
+백엔드는 확장의 `X-Requested-With` 헤더를 확인하고, Origin이 있으면 확장 출처만 허용한다.
+익스텐션은 인증 뒤 `/auth/me`로 쿠키를 확인하고 즐겨찾기를 다시 불러온다.
+
+결과 이벤트 `developer_login_result`는 기존 `chrome.storage.local.eventBuffer`에 저장한다.
+UTC 시각, 요청 ID, 성공·실패·차단 분류, 원인 코드와 소요 시간만 기록한다.
+이 이벤트에는 인증 토큰, 이메일, 비밀번호, 프롬프트 본문을 넣지 않는다.
+브라우저 저장소에 기록하지 못하면 서비스 워커에 `storage_failed`와 요청 ID를 남긴다.
+로그 저장 실패가 완료된 인증 결과를 바꾸지는 않는다.
+운영 주소 접근 권한이 없는 설치본은 즐겨찾기 요청 전에 `ERR-EXT-010`으로 안내한다.
+이때 `extension_api_access_result` 이벤트에 `blocked`와 `HOST_PERMISSION_MISSING`을 저장한다.
+
+코드 변경 후 `chrome://extensions`에서 익스텐션을 새로고침하고 사용 중인 LLM 페이지도
+새로고침한다. 처음 생성된 개발 계정에는 즐겨찾기가 없으므로 웹 앱에서 등록한다.
+
 ## 로컬 실행
 
 1. 백엔드를 `http://localhost:8000` 에 띄운다.
@@ -66,8 +102,7 @@ API 가 없어서 못 하는 기능은 확장 쪽에서 우회하거나 범위 �
 
 - **웹 앱 화면 경로** — `src/content/widget.js` 의 `ROUTES` 는 추정값이다.
   프론트엔드 라우팅과 대조해야 한다.
-- **운영 도메인** — `API_BASE`·`WEBAPP_BASE`·`host_permissions` 가 아직 로컬과
-  Vercel 프리뷰 주소뿐이다.
+- **운영 쿠키 전송**: 실제 설치된 Chrome 확장에서 쿠키 전송과 갱신을 확인한다.
 - **아이콘** — `assets/icons/*` 는 단색 자리표시자다.
 
 ## 범위 밖

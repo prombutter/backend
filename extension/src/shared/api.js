@@ -1,4 +1,4 @@
-// 백엔드 호출 래퍼.
+﻿// 백엔드 호출 래퍼.
 //
 // 인증은 HttpOnly 쿠키(access_token / refresh_token)로 이뤄지므로 모든 요청에
 // credentials: 'include' 를 붙인다. 확장이 대상 오리진에 host_permissions 를 가지면
@@ -53,17 +53,17 @@ async function parseError(res) {
   }
 }
 
-export async function apiFetch(path, { method = 'GET', body } = {}, retry = true) {
+export async function apiFetch(path, { method = 'GET', body, headers } = {}, retry = true) {
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     credentials: 'include',
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
   if (res.status === 401) {
     if (retry && (await refreshSession())) {
-      return apiFetch(path, { method, body }, false);
+      return apiFetch(path, { method, body, headers }, false);
     }
     throw new UnauthorizedError();
   }

@@ -26,6 +26,18 @@
   "actionLogin": {
     "message": "Sign in"
   },
+  "actionDeveloperLogin": {
+    "message": "Developer login"
+  },
+  "statusDeveloperSigningIn": {
+    "message": "Signing in with the development account."
+  },
+  "errDeveloperLoginFailed": {
+    "message": "Developer login failed. Check your local server connection and try again."
+  },
+  "errDeveloperLoginUnavailable": {
+    "message": "Developer login is unavailable. Check the developer login settings on your local server."
+  },
   "actionOpenWebapp": {
     "message": "Add favorites on the web"
   },
@@ -64,6 +76,9 @@
   },
   "errLoadFailed": {
     "message": "Couldn't load your favorites. The connection looks unstable. Please try again."
+  },
+  "errApiPermissionRequired": {
+    "message": "API access permission needs to be applied. Reload Prombutter at chrome://extensions, then reload this page."
   },
   "errLoginRequired": {
     "message": "Sign in to use your favorite prompts right away."

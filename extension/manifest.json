@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDescription__",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "default_locale": "ko",
   "minimum_chrome_version": "114",
   "icons": {
@@ -30,7 +30,8 @@
     "storage"
   ],
   "host_permissions": [
-    "http://localhost:8000/*"
+    "http://localhost:8000/*",
+    "https://backend-prombutter-s-projects.vercel.app/*"
   ],
   "content_scripts": [
     {
@@ -47,7 +48,7 @@
     {
       "matches": [
         "http://localhost:3000/*",
-        "https://frontend-prombutters-projects.vercel.app/*"
+        "https://frontend-prombutter-s-projects.vercel.app/*"
       ],
       "js": [
         "src/content/install-flag.js"

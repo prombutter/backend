@@ -47,9 +47,17 @@ jobs:
         with:
           python-version: '3.12'
 
-      # 모든 텍스트 파일이 BOM 없는 UTF-8 인지 확인한다.
+      # 텍스트 파일의 UTF-8 인코딩과 확장별 BOM 정책을 확인한다.
       - name: Check Encoding (UTF-8)
         run: python scripts/check_encoding.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify extension developer login
+        run: node --test extension/tests/developer-login.test.mjs
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3

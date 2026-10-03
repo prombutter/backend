@@ -1,5 +1,5 @@
-"""
-소스 파일 인코딩 검사 — 모든 텍스트 파일은 BOM 없는 UTF-8 이어야 한다.
+﻿"""
+소스 파일 인코딩 검사. UTF-8을 확인하고 소스·문서의 UTF-8 BOM을 허용한다.
 
 배경: app/core/utils.py 가 UTF-16 으로 저장되어 파이썬이 import 하지 못했고,
       SyntaxError: source code string cannot contain null bytes 로
@@ -17,11 +17,10 @@ import sys
 # 검사 대상 확장자 (이미지·PDF 같은 진짜 바이너리는 제외)
 TEXT_SUFFIXES = (
     ".py", ".md", ".txt", ".yml", ".yaml", ".toml",
-    ".sql", ".json", ".cfg", ".ini", ".sh", ".env.example",
+    ".sql", ".json", ".cfg", ".ini", ".sh", ".env.example", ".js", ".mjs", ".ps1",
 )
 
 BOMS = {
-    b"\xef\xbb\xbf": "UTF-8 BOM",
     b"\xff\xfe": "UTF-16 LE BOM",
     b"\xfe\xff": "UTF-16 BE BOM",
 }
@@ -45,8 +44,11 @@ def check(path: str) -> str | None:
         if raw.startswith(bom):
             return f"{label} 로 시작함"
 
+    if raw.startswith(b"\xef\xbb\xbf") and not path.endswith((".md", ".ps1", ".py", ".js", ".mjs")):
+        return "이 파일 형식에는 UTF-8 BOM을 허용하지 않음"
+
     try:
-        raw.decode("utf-8")
+        raw.decode("utf-8-sig")
     except UnicodeDecodeError as e:
         return f"UTF-8 로 읽을 수 없음 ({e.reason}, {e.start} 번째 바이트)"
 
@@ -57,10 +59,10 @@ def main() -> int:
     problems = [(p, r) for p in tracked_text_files() if (r := check(p))]
 
     if not problems:
-        print("인코딩 검사 통과 — 모든 텍스트 파일이 BOM 없는 UTF-8 입니다.")
+        print("인코딩 검사 통과. 모든 텍스트 파일이 UTF-8입니다.")
         return 0
 
-    print("인코딩 검사 실패 — 아래 파일을 BOM 없는 UTF-8 로 다시 저장해 주세요.\n")
+    print("인코딩 검사 실패. 아래 파일을 UTF-8로 다시 저장해 주세요.\n")
     for path, reason in problems:
         print(f"  {path}: {reason}")
     print("\n예시:  iconv -f UTF-16LE -t UTF-8 <파일> > tmp && mv tmp <파일>")

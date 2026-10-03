@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+﻿from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _split_csv(value: str) -> list[str]:
@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # 빈 값이면 응답한 호스트에만 묶인다.
     COOKIE_DOMAIN: str = ""
     APP_ENV: str = "local"
+    DEVELOPER_LOGIN_ENABLED: bool = False
     # 비밀번호 재설정 토큰을 콘솔에 찍을지. 이메일 발송이 아직 없어 개발 중에는 이것이 유일한
     # 전달 경로지만, 운영에서 stdout 은 곧 로그 수집기다. 로그 열람 권한이 계정 탈취 경로가
     # 되지 않도록 기본은 꺼 둔다 — 켜는 것은 개발자가 명시할 때만이다.

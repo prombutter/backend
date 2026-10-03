@@ -1,8 +1,9 @@
-// 확장 전역 상수. 서비스 워커·팝업(모듈 컨텍스트)에서만 import 한다.
+﻿// 확장 전역 상수. 서비스 워커·팝업(모듈 컨텍스트)에서만 import 한다.
 // 콘텐츠 스크립트는 모듈이 아니므로 필요한 값을 자체 선언한다.
 
-export const API_BASE = 'http://localhost:8000';
-export const WEBAPP_BASE = 'http://localhost:3000';
+export const API_BASE = 'https://backend-prombutter-s-projects.vercel.app';
+export const WEBAPP_BASE = 'https://frontend-prombutter-s-projects.vercel.app';
+export const DEVELOPER_LOGIN_AVAILABLE = new URL(API_BASE).origin === 'http://localhost:8000';
 
 // 파츠 API 만 /api/v1 아래에 있다. 백엔드 현행 그대로 따른다.
 export const PARTS_PREFIX = '/api/v1';
@@ -17,6 +18,7 @@ export const MSG = {
   GET_FAVORITES: 'PB_GET_FAVORITES',
   RENDER_PROMPT: 'PB_RENDER_PROMPT',
   OPEN_WEBAPP: 'PB_OPEN_WEBAPP',
+  DEVELOPER_LOGIN: 'PB_DEVELOPER_LOGIN',
   TRACK: 'PB_TRACK',
 };
 
@@ -38,6 +40,9 @@ export const ERR = {
   LOGIN_REQUIRED: 'ERR-EXT-005',
   TAB_BLOCKED: 'ERR-EXT-006',
   LOCKED: 'ERR-EXT-007',
+  DEVELOPER_LOGIN_FAILED: 'ERR-EXT-008',
+  DEVELOPER_LOGIN_UNAVAILABLE: 'ERR-EXT-009',
+  API_PERMISSION_REQUIRED: 'ERR-EXT-010',
 };
 
 // 에러 코드 → 문구 키. 문구 자체는 _locales 에 있다 (EXT §4.5 구현 요청:
@@ -50,4 +55,7 @@ export const ERR_MESSAGE_KEY = {
   [ERR.LOGIN_REQUIRED]: 'errLoginRequired',
   [ERR.TAB_BLOCKED]: 'errTabBlocked',
   [ERR.LOCKED]: 'errLocked',
+  [ERR.DEVELOPER_LOGIN_FAILED]: 'errDeveloperLoginFailed',
+  [ERR.DEVELOPER_LOGIN_UNAVAILABLE]: 'errDeveloperLoginUnavailable',
+  [ERR.API_PERMISSION_REQUIRED]: 'errApiPermissionRequired',
 };

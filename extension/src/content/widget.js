@@ -1,4 +1,4 @@
-// EXT-WIDGET 프롬프트 바 — ChatGPT·Claude 입력창 바로 위 고정 (EXT §4.2).
+﻿// EXT-WIDGET 프롬프트 바 — ChatGPT·Claude 입력창 바로 위 고정 (EXT §4.2).
 //
 // 남의 서비스 화면에 끼어드는 UI 라 §4.4 보호 기준이 일반 화면보다 엄격하다.
 // 전면 오버레이·드래그·이탈 방해가 없고, 주입은 기존 입력을 지우지 않는다.
@@ -13,6 +13,7 @@
     GET_FAVORITES: 'PB_GET_FAVORITES',
     RENDER_PROMPT: 'PB_RENDER_PROMPT',
     OPEN_WEBAPP: 'PB_OPEN_WEBAPP',
+    DEVELOPER_LOGIN: 'PB_DEVELOPER_LOGIN',
     TRACK: 'PB_TRACK',
   };
 
@@ -24,6 +25,9 @@
     LOGIN_REQUIRED: 'ERR-EXT-005',
     TAB_BLOCKED: 'ERR-EXT-006',
     LOCKED: 'ERR-EXT-007',
+    DEVELOPER_LOGIN_FAILED: 'ERR-EXT-008',
+    DEVELOPER_LOGIN_UNAVAILABLE: 'ERR-EXT-009',
+    API_PERMISSION_REQUIRED: 'ERR-EXT-010',
   };
 
   // 문구는 코드에 직접 쓰지 않는다 (EXT §4.5 구현 요청). 여기는 코드→키 지도만 둔다.
@@ -35,6 +39,9 @@
     [ERR.LOGIN_REQUIRED]: 'errLoginRequired',
     [ERR.TAB_BLOCKED]: 'errTabBlocked',
     [ERR.LOCKED]: 'errLocked',
+    [ERR.DEVELOPER_LOGIN_FAILED]: 'errDeveloperLoginFailed',
+    [ERR.DEVELOPER_LOGIN_UNAVAILABLE]: 'errDeveloperLoginUnavailable',
+    [ERR.API_PERMISSION_REQUIRED]: 'errApiPermissionRequired',
   };
 
   // 웹 앱 화면 경로. 프론트엔드 라우팅이 바뀌면 여기만 고치면 된다.
@@ -302,6 +309,7 @@
 
   let bar = null; // { host, chipsEl, statusEl }
   let data = null; // { state, prompts }
+  let developerLoginInFlight = false;
 
   const truncate = (title) =>
     title.length > TITLE_MAX ? title.slice(0, TITLE_MAX) + '…' : title;
@@ -311,7 +319,7 @@
   // 겹치기는 둘 다 피한다 (EXT §4.3.2 디자인 확인 사항).
   let dismissStatus = null;
 
-  function setStatus(text, { action, transient = false } = {}) {
+  function setStatus(text, { action, actions = [], transient = false } = {}) {
     const { statusEl, root } = bar;
 
     if (dismissStatus) {
@@ -329,12 +337,12 @@
     }
     statusEl.classList.toggle('pb-status-empty', !text);
 
-    if (action) {
+    for (const item of action ? [action, ...actions] : actions) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'pb-link';
-      button.textContent = action.label;
-      button.addEventListener('click', action.onClick);
+      button.textContent = item.label;
+      button.addEventListener('click', item.onClick);
       button.addEventListener('keydown', onItemKeydown);
       statusEl.append(button);
     }
@@ -457,8 +465,15 @@
     }
     if (data.state === 'LOGIN_REQUIRED') {
       chipsEl.replaceChildren();
-      setStatus(t('errLoginRequired'), {
+      if (developerLoginInFlight) {
+        setStatus(t('statusDeveloperSigningIn'));
+        return;
+      }
+      setStatus(t(ERR_MESSAGE_KEY[data.loginErrorCode] || 'errLoginRequired'), {
         action: { label: t('actionLogin'), onClick: () => openWebapp(ROUTES.LOGIN) },
+        actions: data.developerLoginAvailable ? [
+          { label: t('actionDeveloperLogin'), onClick: developerLogin },
+        ] : [],
       });
       return;
     }
@@ -471,7 +486,7 @@
     }
     if (data.state !== 'READY') {
       chipsEl.replaceChildren();
-      setStatus(t('errLoadFailed'), {
+      setStatus(t(ERR_MESSAGE_KEY[data.errorCode] || 'errLoadFailed'), {
         action: { label: t('actionRetry'), onClick: () => loadFavorites(true) },
       });
       return;
@@ -485,6 +500,26 @@
 
   let inFlight = null;
 
+  async function developerLogin() {
+    if (developerLoginInFlight) return;
+    const loginData = data;
+    developerLoginInFlight = true;
+    render();
+    try {
+      const res = await send({ type: MSG.DEVELOPER_LOGIN });
+      if (!res?.ok) {
+        data = { ...loginData, loginErrorCode: res?.errorCode || ERR.DEVELOPER_LOGIN_FAILED };
+        return;
+      }
+      await loadFavorites(true);
+    } catch {
+      data = { ...loginData, loginErrorCode: ERR.DEVELOPER_LOGIN_FAILED };
+    } finally {
+      developerLoginInFlight = false;
+      render();
+    }
+  }
+
   async function loadFavorites(force = false) {
     if (inFlight && !force) return inFlight;
 
@@ -495,7 +530,11 @@
       .catch(() => null)
       .then((res) => {
         if (!res) return { state: 'ERROR' };
-        if (!res.ok) return { state: res.state === 'LOGIN_REQUIRED' ? 'LOGIN_REQUIRED' : 'ERROR' };
+        if (!res.ok || res.state === 'ERROR') return {
+          state: res.state === 'LOGIN_REQUIRED' ? 'LOGIN_REQUIRED' : 'ERROR',
+          errorCode: res.errorCode,
+          developerLoginAvailable: res.developerLoginAvailable === true,
+        };
         return { state: res.state, prompts: res.prompts };
       })
       .finally(() => {
@@ -737,6 +776,7 @@
     if (document.visibilityState !== 'visible') return;
     if (!bar?.host.isConnected) return;
     if (data?.state !== 'LOGIN_REQUIRED') return;
+    if (developerLoginInFlight) return;
 
     const next = await loadFavorites(true);
     if (next?.state === 'READY' || next?.state === 'EMPTY') {

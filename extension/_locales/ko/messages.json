@@ -26,6 +26,18 @@
   "actionLogin": {
     "message": "로그인"
   },
+  "actionDeveloperLogin": {
+    "message": "개발자 로그인"
+  },
+  "statusDeveloperSigningIn": {
+    "message": "개발용 계정으로 인증하고 있어요."
+  },
+  "errDeveloperLoginFailed": {
+    "message": "개발자 로그인에 실패했어요. 로컬 서버 연결을 확인한 뒤 다시 시도해 주세요."
+  },
+  "errDeveloperLoginUnavailable": {
+    "message": "개발자 로그인을 사용할 수 없어요. 로컬 서버의 개발자 로그인 설정을 확인해 주세요."
+  },
   "actionOpenWebapp": {
     "message": "웹에서 즐겨찾기 등록하기"
   },
@@ -64,6 +76,9 @@
   },
   "errLoadFailed": {
     "message": "즐겨찾기를 불러오지 못했어요. 연결이 불안정한 것 같아요. 다시 시도해 주세요."
+  },
+  "errApiPermissionRequired": {
+    "message": "운영 서버 접근 권한을 적용해야 해요. chrome://extensions에서 Prombutter를 새로고침한 뒤 이 페이지도 새로고침해 주세요."
   },
   "errLoginRequired": {
     "message": "로그인하면 즐겨찾기 프롬프트를 바로 쓸 수 있어요."
