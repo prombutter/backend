@@ -19,6 +19,9 @@ dependencies = [
     "httpx>=0.28.1",
 ]
 
+[project.scripts]
+app = "app.main:app"
+
 [dependency-groups]
 dev = [
     "ruff>=0.7.0",
