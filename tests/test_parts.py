@@ -187,7 +187,7 @@ async def test_restore_quota_exceeded(client: AsyncClient, test_workspace_id: uu
     with patch("sqlalchemy.ext.asyncio.AsyncSession.scalar", new=mock_scalar):
         res = await client.post(f"/api/v1/workspaces/{ws_id}/parts/{part_id}/restore")
         assert res.status_code == 422
-        assert res.json()["code"] == "ERR-QUOTA-004"
+        assert res.json()["error_code"] == "ERR-QUOTA-004"
 
 @pytest.mark.asyncio
 async def test_restore_title_conflict(client: AsyncClient, test_workspace_id: uuid.UUID):
@@ -203,7 +203,7 @@ async def test_restore_title_conflict(client: AsyncClient, test_workspace_id: uu
     # Try to restore part A
     res = await client.post(f"/api/v1/workspaces/{ws_id}/parts/{part_id}/restore")
     assert res.status_code == 409
-    assert res.json()["code"] == "ERR-PART-001"
+    assert res.json()["error_code"] == "ERR-PART-001"
 
 @pytest.mark.asyncio
 async def test_restore_already_purged_404(client: AsyncClient, test_workspace_id: uuid.UUID):
@@ -219,4 +219,4 @@ async def test_restore_already_purged_404(client: AsyncClient, test_workspace_id
     # Try to restore
     res = await client.post(f"/api/v1/workspaces/{ws_id}/parts/{part_id}/restore")
     assert res.status_code == 404
-    assert res.json()["code"] == "ERR-PART-002"
+    assert res.json()["error_code"] == "ERR-PART-002"
