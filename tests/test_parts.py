@@ -162,3 +162,61 @@ async def test_parts_forbidden_workspace_403(client: AsyncClient, make_email):
     
     # Should be 403 Forbidden
     assert res.status_code == 403
+
+@pytest.mark.asyncio
+async def test_restore_quota_exceeded(client: AsyncClient, test_workspace_id: uuid.UUID):
+    ws_id = str(test_workspace_id)
+    # Create 1 part and delete it
+    res = await client.post(f"/api/v1/workspaces/{ws_id}/parts", json={"title": "To Restore", "body": "B1"})
+    part_id = res.json()["id"]
+    await client.delete(f"/api/v1/workspaces/{ws_id}/parts/{part_id}")
+
+    from unittest.mock import patch
+    import sqlalchemy.ext.asyncio
+    
+    # original scalar to fallback
+    original_scalar = sqlalchemy.ext.asyncio.AsyncSession.scalar
+    
+    async def mock_scalar(self, statement, *args, **kwargs):
+        # Check if the statement is a count statement
+        # A rough check is stringifying the statement
+        if "count" in str(statement).lower():
+            return 500
+        return await original_scalar(self, statement, *args, **kwargs)
+
+    with patch("sqlalchemy.ext.asyncio.AsyncSession.scalar", new=mock_scalar):
+        res = await client.post(f"/api/v1/workspaces/{ws_id}/parts/{part_id}/restore")
+        assert res.status_code == 422
+        assert res.json()["code"] == "ERR-QUOTA-004"
+
+@pytest.mark.asyncio
+async def test_restore_title_conflict(client: AsyncClient, test_workspace_id: uuid.UUID):
+    ws_id = str(test_workspace_id)
+    # Create part A and delete it
+    res = await client.post(f"/api/v1/workspaces/{ws_id}/parts", json={"title": "Conflict Title", "body": "B1"})
+    part_id = res.json()["id"]
+    await client.delete(f"/api/v1/workspaces/{ws_id}/parts/{part_id}")
+
+    # Create part B with the same title
+    await client.post(f"/api/v1/workspaces/{ws_id}/parts", json={"title": "Conflict Title", "body": "B2"})
+
+    # Try to restore part A
+    res = await client.post(f"/api/v1/workspaces/{ws_id}/parts/{part_id}/restore")
+    assert res.status_code == 409
+    assert res.json()["code"] == "ERR-PART-001"
+
+@pytest.mark.asyncio
+async def test_restore_already_purged_404(client: AsyncClient, test_workspace_id: uuid.UUID):
+    ws_id = str(test_workspace_id)
+    # Create and delete
+    res = await client.post(f"/api/v1/workspaces/{ws_id}/parts", json={"title": "To Purge", "body": "B1"})
+    part_id = res.json()["id"]
+    await client.delete(f"/api/v1/workspaces/{ws_id}/parts/{part_id}")
+
+    # Permanent delete
+    await client.delete(f"/api/v1/workspaces/{ws_id}/parts/{part_id}/permanent")
+
+    # Try to restore
+    res = await client.post(f"/api/v1/workspaces/{ws_id}/parts/{part_id}/restore")
+    assert res.status_code == 404
+    assert res.json()["code"] == "ERR-PART-002"

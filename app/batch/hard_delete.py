@@ -10,6 +10,7 @@ from app.models import (
     PromptBlock,
     Variable,
     BlockType,
+    UserSession,
 )
 from app.models.parts import Part, EntityTag
 
@@ -79,9 +80,16 @@ async def _execute_hard_delete(session, cutoff, now):
                 await session.execute(delete(EntityTag).where(EntityTag.entity_id.in_(safe_ids), EntityTag.entity_type == 'PART'))
                 res = await session.execute(delete(Part).where(Part.id.in_(safe_ids)))
                 deleted_parts_count = res.rowcount
+                
+        # 만료/무효화된 UserSession 정리
+        sessions_stmt = delete(UserSession).where(
+            (UserSession.expires_at <= now) | (UserSession.revoked_at.is_not(None))
+        )
+        sessions_res = await session.execute(sessions_stmt)
+        deleted_sessions_count = sessions_res.rowcount
             
         await session.commit()
-        logger.info(f"Batch job finished successfully. Deleted {deleted_parts_count} parts and {deleted_prompts_count} prompts.")
+        logger.info(f"Batch job finished successfully. Deleted {deleted_parts_count} parts, {deleted_prompts_count} prompts, and {deleted_sessions_count} expired sessions.")
     except Exception as e:
         await session.rollback()
         logger.error(f"Error during hard delete batch job: {e}")
