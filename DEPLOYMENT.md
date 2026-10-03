@@ -1,4 +1,4 @@
-# Prombutter 운영 배포
+﻿# Prombutter 운영 배포
 
 2026-10-03 운영자 결정: 프론트와 Python API는 Vercel에 배포하고 DB와 OAuth 인증은 Supabase를 사용한다. 확장은 현재 Chrome의 개발자 모드 설치본을 갱신한다.
 
@@ -20,6 +20,9 @@
 3. 배포 대상 Vercel 팀과 두 프로젝트를 확인한다. 다른 프로젝트의 기본 CLI 설정을 재사용하지 않는다.
 4. Supabase 운영 스키마와 db/migrations의 적용 상태를 확인한다. 확인되지 않은 마이그레이션을 실행하지 않는다.
 5. 운영 인증, CORS, 쿠키 설정을 확인한 뒤 배포한다. 배포 후 health와 DB 연결, 정상·실패 인증 경로 및 저장된 운영 로그를 확인한다.
+6. 실제 API 전용 DB 계정으로 `scripts/check_runtime_sequence_permissions.sql`을 실행한다. 모든 행의 `insert_allowed`와 `nextval_allowed`가 참이어야 한다. 테이블 권한과 DB 연결만으로 INSERT 가능 여부를 판단하지 않는다. 소유 관계 없이 `DEFAULT nextval(...)`로 연결한 시퀀스도 검사한다.
+
+이메일 로그인은 성공·실패 모두 `login_attempts`에 기록한다. API 계정에는 해당 테이블의 INSERT 권한과 `login_attempts_id_seq`의 USAGE 권한이 함께 필요하다. 누락 시 로그인 요청이 500 오류로 실패한다. 운영 보완은 확인된 API 계정과 해당 시퀀스로 한정하며, 익명·인증 사용자 권한과 시퀀스 값은 변경하지 않는다.
 
 ## Vercel Python API
 
@@ -55,7 +58,7 @@ https://gkyzvjxycidxkhqrjvfu.supabase.co/auth/v1/callback
 
 이 주소와 앱의 OAUTH_CALLBACK_URL은 서로 다른 단계다. OAUTH_CALLBACK_URL은 실제 Python API의 /auth/oauth/callback을 가리키고, OAUTH_FRONTEND_REDIRECT는 실제 프론트의 인증 완료 화면을 가리킨다. Supabase URL 허용 목록도 이 흐름에 맞춘다.
 
-현재 프론트 dev는 로그인 버튼이 실제 인증을 호출하지 않고 임시 workspace ID를 사용한다. 프론트 NEXT_PUBLIC_API_BASE_URL에는 실제 운영 API 오리진을 등록한다. 운영 빌드는 이 HTTPS 설정이 없으면 중단한다. 빌드 성공만으로 운영 로그인이나 데이터 연동이 완료되었다고 판단하지 않는다.
+운영 프론트는 이메일 로그인·회원가입 후 인증 쿠키를 확인하고, 현재 계정의 workspace ID를 API에서 조회한다. Google 로그인은 Python API의 OAuth 시작 경로에 연결한다. 프론트 NEXT_PUBLIC_API_BASE_URL에는 실제 운영 API 오리진을 등록한다. 운영 빌드는 이 HTTPS 설정이 없으면 중단한다. 빌드 성공만으로 실제 브라우저의 로그인이나 데이터 연동이 완료되었다고 판단하지 않는다.
 
 ## 확장 갱신
 

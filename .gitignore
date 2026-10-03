@@ -101,3 +101,4 @@ Docs/
 # --- DB 마이그레이션 SQL (추적함) ---
 !db/migrations/
 !db/migrations/*.sql
+!scripts/check_runtime_sequence_permissions.sql
